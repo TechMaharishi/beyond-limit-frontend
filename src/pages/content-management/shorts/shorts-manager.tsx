@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from "react";
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Loader2, Trash2, Search, AlertCircle, ArrowUpDown, ChevronLeft, ChevronRight, Plus, Filter, Copy, Edit, CheckCircle, MoreVertical } from "lucide-react";
 import { apiClient } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/utils";
-import { useChangeShortStatus } from "@/hooks/use-shorts";
+import { useChangeShortStatus, useShorts, shortsKeys } from "@/hooks/use-shorts";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -116,23 +116,6 @@ const getStatusBadgeVariant = (status: string) => {
     }
 };
 
-/** API helpers */
-
-const fetchShorts = async ({ page, limit, status, search, sortBy, sortOrder }: any) => {
-    const params: any = {
-        page,
-        limit,
-    };
-
-    if (status) params.status = status;
-    if (search) params.q = search;
-    if (sortBy) params.sortBy = sortBy;
-    if (sortOrder) params.order = sortOrder;
-
-    const response = await apiClient.get<ShortsResponse>("/short-videos", { params });
-    return response.data;
-};
-
 const deleteShort = async (id: string) => {
     const response = await apiClient.delete(`/short-videos/${id}`);
     return response.data;
@@ -180,31 +163,27 @@ export function ShortsManager({
     const parentRef = useRef<HTMLDivElement>(null);
     const queryClient = useQueryClient();
 
-    // Query with pagination and sorting; keeps previous data for smoother UI transitions.
-    const { data, isLoading, isError } = useQuery({
-        queryKey: ["shorts", page, limit, status, debouncedSearch, sortBy, sortOrder],
-        queryFn: () => fetchShorts({
-            page,
-            limit,
-            status,
-            search: debouncedSearch,
-            sortBy,
-            sortOrder
-        }),
-        placeholderData: keepPreviousData,
+    // Query with pagination and sorting via useShorts hook; keeps previous data for smoother UI transitions.
+    const { data, isLoading, isError } = useShorts({
+        page,
+        limit,
+        status: status || undefined,
+        search: debouncedSearch || undefined,
+        sortBy: sortBy || undefined,
+        order: sortOrder as 'asc' | 'desc',
     });
 
     const shorts = data?.data || [];
     const meta = data?.meta;
     const totalItems = meta?.total || 0;
-    const totalPages = Math.ceil(totalItems / limit);
+    const totalPages = meta?.totalPages ?? Math.ceil(totalItems / limit);
 
 
     // Delete mutation with cache invalidation and user feedback.
     const deleteMutation = useMutation({
         mutationFn: deleteShort,
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["shorts"] });
+            queryClient.invalidateQueries({ queryKey: shortsKeys.lists() });
             toast.success("Short video deleted successfully");
             setIsDeleteDialogOpen(false);
             setSelectedId(null);
@@ -246,7 +225,7 @@ export function ShortsManager({
     };
 
     const handlePublish = (id: string) => {
-        changeStatusMutation.mutate({ shortId: id, status: 'published' }, {
+        changeStatusMutation.mutate({ shortId: id, payload: { status: 'published' } }, {
             onSuccess: () => toast.success("Short video published successfully"),
             onError: () => toast.error("Failed to publish short video")
         });

@@ -1071,57 +1071,231 @@ curl -X POST "http://localhost:5000/api/v1/short-videos/69f2a3b4c5d6e7f8g9h0i1j2
 ### 5.6 Management Endpoints (V0)
 **Source:** `src/routes/content-management/short-videos.ts`
 
-#### List Videos (Management Dashboard)
+#### 5.6.1 List Videos (Management Dashboard)
 **Endpoint:** `GET /short-videos`
 - **Permissions Required:** `shortVideoStatus: ["view"]`
-- **Description:** Paginated list for admin/trainer/trainee dashboard. Admin sees all non-draft videos plus their own drafts. Creators see their own videos only. Supports `?status=`, `?tags=`, and `?search=` filters.
+- **Description:** Paginated list for admin/trainer/trainee dashboard. Supports filtering and search.
+- **Query Parameters:**
+  - `page`: Page number (default: 1)
+  - `limit`: Items per page (default: 10)
+  - `status`: `draft`, `pending`, `published`, or `rejected`
+  - `tags`: Comma-separated tag slugs
+  - `q`: Search string (searches title/description)
+  - `sortBy`: `createdAt`, `title`, or `tags`
+  - `order`: `asc` or `desc`
 
-#### List Published Videos (End-User Feed)
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:5000/api/short-videos?status=pending&limit=5&q=Intro" \
+  -H "Authorization: Bearer ADMIN_SESSION_TOKEN"
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Short videos fetched",
+  "data": [
+    {
+      "_id": "69f2a3b4c5d6e7f8g9h0i1j2",
+      "title": "Intro to Research",
+      "description": "Basic concepts...",
+      "tags": ["clinical", "research"],
+      "status": "pending",
+      "thumbnailUrl": "https://res.cloudinary.com/...",
+      "durationSeconds": 120.5,
+      "createdAt": "2026-05-03T10:00:00Z"
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 5,
+    "total": 12,
+    "hasNext": true
+  }
+}
+```
+
+#### 5.6.2 List Published Videos (End-User Feed)
 **Endpoint:** `GET /short-videos/published-videos`
-- **Description:** Paginated list of `published` videos visible to the authenticated user. Respects `visibility` (`clinicians` / `users` / `all`) and `accessLevel` (`free` / `develop` / `master`) gates. Includes per-video watch progress.
+- **Description:** Paginated list of published videos visible to the current user. Automatically filters by `visibility` and `accessLevel`.
 
-#### Get Single Video
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:5000/api/short-videos/published-videos?page=1&limit=10" \
+  -H "Authorization: Bearer USER_SESSION_TOKEN"
+```
+
+#### 5.6.3 Get Single Video Details
 **Endpoint:** `GET /short-videos/:id`
-- **Description:** Published videos: accessible to all authenticated users (subject to visibility/tier gates). Draft / pending / rejected: owner + admin only.
+- **Description:** Retrieves full details for a video, including resources and subtitle status.
 
-#### Update Video Metadata
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:5000/api/short-videos/69f2a3b4c5d6e7f8g9h0i1j2" \
+  -H "Authorization: Bearer USER_SESSION_TOKEN"
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Short video fetched",
+  "data": {
+    "_id": "69f2a3b4c5d6e7f8g9h0i1j2",
+    "title": "Intro to Research",
+    "cloudinaryUrl": "https://res.cloudinary.com/.../auto.m3u8",
+    "resources": [
+      {
+        "_id": "res_123",
+        "name": "Lecture Notes",
+        "url": "https://res.cloudinary.com/.../notes.pdf"
+      }
+    ],
+    "subtitle_status": "completed",
+    "subtitles": [...]
+  }
+}
+```
+
+#### 5.6.4 Update Video Metadata
 **Endpoint:** `PUT /short-videos/:id`
-- **Permissions Required:** `shortVideo: ["update"]` — Owner or Admin.
-- **Description:** Update title, description, tags, accessLevel, visibility, thumbnail, or video file. Trainers/trainees cannot set status to `published` or `rejected` via this endpoint (use change-status instead).
+- **Permissions Required:** `shortVideo: ["update"]` (Owner or Admin)
+- **Description:** Updates video details. If `cloudinaryId` is changed, the subtitle pipeline is reset.
 
-#### Delete Video
+**cURL Example:**
+```bash
+curl -X PUT "http://localhost:5000/api/short-videos/69f2a3b4c5d6e7f8g9h0i1j2" \
+  -H "Authorization: Bearer OWNER_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Updated Title",
+    "accessLevel": "master"
+  }'
+```
+
+#### 5.6.5 Track Watch Progress
+**Endpoint:** `POST /short-videos/:id/progress`
+- **Description:** Saves the current watch position. 
+- **Body:** `{ "watchedSeconds": number }`
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/short-videos/69f2a3b4c5d6e7f8g9h0i1j2/progress" \
+  -H "Authorization: Bearer USER_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"watchedSeconds": 45}'
+```
+
+#### 5.6.6 Add Resources
+**Endpoint:** `POST /short-videos/:id/resources`
+- **Description:** Attach files or external URLs to the video. Supports `multipart/form-data` for file uploads or `application/json` for URL entries.
+
+**cURL Example (File Upload):**
+```bash
+curl -X POST "http://localhost:5000/api/short-videos/69f2a3b4c5d6e7f8g9h0i1j2/resources" \
+  -H "Authorization: Bearer OWNER_SESSION_TOKEN" \
+  -F "files=@/path/to/notes.pdf" \
+  -F "names=[\"Lecture Notes\"]"
+```
+
+**cURL Example (URL Entry):**
+```bash
+curl -X POST "http://localhost:5000/api/short-videos/69f2a3b4c5d6e7f8g9h0i1j2/resources" \
+  -H "Authorization: Bearer OWNER_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"resources": [{"name": "External Link", "url": "https://example.com"}]}'
+```
+
+#### 5.6.7 Delete Video
 **Endpoint:** `DELETE /short-videos/:id`
-- **Permissions Required:** `shortVideo: ["delete"]` — Owner or Admin.
-- **Description:** Permanently deletes the record and all associated Cloudinary assets (video + thumbnail).
+- **Permissions Required:** `shortVideo: ["delete"]` (Owner or Admin)
 
-#### Remove Video File Only
+**cURL Example:**
+```bash
+curl -X DELETE "http://localhost:5000/api/short-videos/69f2a3b4c5d6e7f8g9h0i1j2" \
+  -H "Authorization: Bearer OWNER_SESSION_TOKEN"
+```
+
+#### 5.6.8 Remove Video File Only
 **Endpoint:** `DELETE /short-videos/:id/video`
 - **Permissions Required:** Owner or Admin.
-- **Description:** Removes the Cloudinary video asset but keeps the metadata record (useful to re-upload).
+- **Description:** Removes the Cloudinary video asset but keeps the metadata record intact. Useful for re-uploading a new video to the same record.
 
-#### Track Watch Progress
-**Endpoint:** `POST /short-videos/:id/progress`
-- **Description:** Records the user's watch position. Idempotent — stores the maximum `watchedSeconds` seen. For `user`-role accounts, tracks by `activeProfileId`.
+**cURL Example:**
+```bash
+curl -X DELETE "http://localhost:5000/api/short-videos/69f2a3b4c5d6e7f8g9h0i1j2/video" \
+  -H "Authorization: Bearer OWNER_SESSION_TOKEN"
+```
 
-#### Get Watch Progress
+#### 5.6.9 Get Watch Progress
 **Endpoint:** `GET /short-videos/:id/progress`
-- **Description:** Returns the current `watchedSeconds` and `completed` flag for the authenticated user (or active profile).
+- **Description:** Returns the current watch status for the authenticated user (or active profile).
 
-#### Manage Resources
-**Endpoint:** `POST /short-videos/:id/resources` — Add a file/URL resource (max 10).
-**Endpoint:** `DELETE /short-videos/:id/resources/:resourceId` — Remove a resource and its Cloudinary asset.
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:5000/api/short-videos/69f2a3b4c5d6e7f8g9h0i1j2/progress" \
+  -H "Authorization: Bearer USER_SESSION_TOKEN"
+```
 
-#### Retry Subtitles
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "watchedSeconds": 45,
+    "completed": false,
+    "percentWatched": 37.5
+  }
+}
+```
+
+#### 5.6.10 Remove Resource
+**Endpoint:** `DELETE /short-videos/:id/resources/:resourceId`
+- **Permissions Required:** Owner or Admin.
+- **Description:** Removes a specific resource from the video. If the resource was an uploaded file, it also deletes the asset from Cloudinary.
+
+**cURL Example:**
+```bash
+curl -X DELETE "http://localhost:5000/api/short-videos/69f2a3b4c5d6e7f8g9h0i1j2/resources/res_123" \
+  -H "Authorization: Bearer OWNER_SESSION_TOKEN"
+```
+
+#### 5.6.11 Retry Subtitles
 **Endpoint:** `POST /short-videos/:id/retry-subtitles`
-- **Description:** Manually re-triggers the captioning pipeline for videos where `subtitleStatus` is `failed`.
+- **Description:** Manually re-triggers the background captioning pipeline. Used when the initial automatic generation failed.
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/short-videos/69f2a3b4c5d6e7f8g9h0i1j2/retry-subtitles" \
+  -H "Authorization: Bearer OWNER_SESSION_TOKEN"
+```
 
 ---
 
 ### 5.7 Webhook — Cloudinary Upload Complete
 **Endpoint:** `POST /v1/webhooks/cloudinary/upload-complete`
-- **Security**: Verifies the `X-Cld-Signature` header using your Cloudinary API Secret to confirm the request originated from Cloudinary.
-- **Actions**:
-  1. Validates `notification_type` is `upload`.
-  2. Extracts `shortVideoId` from the `public_id` path.
-  3. Updates the MongoDB record: sets `cloudinaryId`, `durationSeconds`, `cloudinaryUrl`, and `thumbnailUrl`.
-  4. **Subtitle Pipeline**: Sets `subtitle_status` to `pending` with a `not_before = now + 2min` delay, signalling the background Caption Worker to pick up the video after Cloudinary transcoding completes.
+- **Type:** Secure Server-to-Server Webhook
+- **Security**: Verifies `X-Cld-Signature` and `X-Cld-Timestamp` headers using Cloudinary API Secret.
+
+**Typical Payload (sent by Cloudinary):**
+```json
+{
+  "notification_type": "upload",
+  "public_id": "short-videos/69f2a3b4c5d6e7f8g9h0i1j2",
+  "secure_url": "https://res.cloudinary.com/...",
+  "duration": 120.5
+}
+```
+
+**Backend Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Upload webhook processed",
+  "data": {
+    "shortVideoId": "69f2a3b4c5d6e7f8g9h0i1j2",
+    "publicId": "short-videos/69f2a3b4c5d6e7f8g9h0i1j2"
+  }
+}
+```

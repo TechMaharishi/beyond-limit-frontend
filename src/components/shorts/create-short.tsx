@@ -1,15 +1,21 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTags } from '@/hooks/use-course';
 import {
-    useCreateShort,
+    useCreateShortShell,
+    useGetSignedUploadUrl,
+    usePollUploadStatus,
+    usePublishShort,
     useUpdateShort,
     useShort,
     useDeleteShortVideo,
     useRetrySubtitles,
+    useChangeShortStatus,
+    useAddShortResource,
+    useRemoveShortResource,
 } from '@/hooks/use-shorts';
-import { uploadShortVideo, getMp4PlaybackUrl } from '@/services/cloudinary.service';
-import type { AccessLevel, Visibility, ShortVideoStatus } from '@/services/shorts.service';
+import { getMp4PlaybackUrl } from '@/services/cloudinary.service';
+import type { AccessLevel, Visibility } from '@/services/shorts.service';
 import { toast } from 'sonner';
 import HlsVideo from '@/components/media/hls-video';
 import { SubtitleStatusCard } from '@/components/shorts/subtitle-status-card';
@@ -22,6 +28,8 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { Separator } from '@/components/ui/separator';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatRelativeTime } from '@/lib/utils';
 import {
     Dialog,
@@ -51,6 +59,14 @@ import {
     Send,
     CheckCircle,
     AlertCircle,
+    FileText,
+    Link,
+    Plus,
+    Paperclip,
+    ExternalLink,
+    Trash2,
+    Cloud,
+    CloudOff,
 } from 'lucide-react';
 
 /** State model for the short video form. */
@@ -60,6 +76,7 @@ interface ShortFormData {
     tags: string[];
     accessLevel: AccessLevel;
     visibility: Visibility;
+    // These are populated after the Cloudinary webhook fires (videoReady: true)
     cloudinaryUrl: string;
     cloudinaryId: string;
     thumbnailUrl: string;
@@ -83,10 +100,16 @@ export default function CreateShort() {
     const navigate = useNavigate();
     const { rolePath, shortId } = useParams();
     const [currentShortId, setCurrentShortId] = useState<string | undefined>(shortId);
+    // Ref to track the latest ID to prevent race conditions during debounced auto-saves
+    const currentShortIdRef = useRef<string | undefined>(shortId);
+    useEffect(() => { currentShortIdRef.current = currentShortId; }, [currentShortId]);
+
     const isEditMode = Boolean(currentShortId);
     const [formData, setFormData] = useState<ShortFormData>(INITIAL_FORM_DATA);
     const [playbackUrl, setPlaybackUrl] = useState<string>('');
     const sanitizeUrl = (u: string) => (u || '').trim().replace(/^`|`$/g, '');
+    // Track whether we are in the polling phase (waiting for Cloudinary webhook)
+    const [isPolling, setIsPolling] = useState(false);
     useEffect(() => {
         const hls = sanitizeUrl(formData.cloudinaryUrl || '');
         if (hls && hls.includes('.m3u8')) setPlaybackUrl(hls);
@@ -105,21 +128,41 @@ export default function CreateShort() {
     const videoInputRef = useRef<HTMLInputElement | null>(null);
 
     const { data: tags = [], isLoading: isLoadingTags } = useTags();
-    const { data: existingShort } = useShort(currentShortId);
+    const { data: existingShort, refetch: refetchShort } = useShort(currentShortId);
     // Subtitle URL comes from API data; no HEAD fetch required
     const subtitleUrl = existingShort?.subtitles?.find(t => t.default)?.url
         || existingShort?.subtitles?.[0]?.url;
     // Subtitle pipeline status fields
     const subtitleStatus = existingShort?.subtitle_status;
 
-    const createShortMutation = useCreateShort();
+    // V1 two-phase upload hooks
+    const createShortShellMutation = useCreateShortShell();
+    const getSignedUploadUrlMutation = useGetSignedUploadUrl();
+    const publishShortMutation = usePublishShort();
+    const changeStatusMutation = useChangeShortStatus();
+
+    // Polling: check if the Cloudinary webhook has finished processing
+    const { data: uploadStatus } = usePollUploadStatus(currentShortId, isPolling);
+
+    // When polling detects videoReady, stop polling and refresh the short
+    useEffect(() => {
+        if (isPolling && uploadStatus?.videoReady) {
+            setIsPolling(false);
+            refetchShort();
+            toast.success('Video processed successfully!');
+        }
+    }, [isPolling, uploadStatus?.videoReady, refetchShort]);
+
     const updateShortMutation = useUpdateShort();
     const deleteShortVideoMutation = useDeleteShortVideo();
     const retrySubtitlesMutation = useRetrySubtitles();
 
     // Load existing short data in edit mode
+    // A ref guards against triggering auto-save during the initial data-population.
+    const isInitialLoad = useRef(true);
     useEffect(() => {
         if (existingShort && currentShortId) {
+            isInitialLoad.current = true; // mark as loading — suppress auto-save
             setFormData({
                 title: existingShort.title || '',
                 description: existingShort.description || '',
@@ -131,8 +174,96 @@ export default function CreateShort() {
                 thumbnailUrl: sanitizeUrl(existingShort.thumbnailUrl || ''),
                 durationSeconds: existingShort.durationSeconds || 0,
             });
+            // Allow auto-save after the render cycle that applied the loaded data
+            setTimeout(() => { isInitialLoad.current = false; }, 0);
+        } else if (!currentShortId) {
+            // New short: allow auto-save immediately
+            isInitialLoad.current = false;
         }
     }, [existingShort, currentShortId]);
+
+    // ─── Auto-save state ───────────────────────────────────────────────────────
+    type AutoSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+    const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus>('idle');
+    const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const savedBadgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    /**
+     * Core auto-save function.
+     * - If no shell exists yet and the title is non-empty, creates one via POST /v1/short-videos.
+     * - If a shell already exists, patches metadata via PUT /short-videos/:id.
+     * Silent — does NOT show toast (status badge in header is used instead).
+     */
+    const performAutoSave = useCallback(async (data: ShortFormData, shellId?: string) => {
+        // Nothing to save if title is blank and no shell exists
+        if (!shellId && !data.title.trim()) return;
+
+        setAutoSaveStatus('saving');
+        try {
+            if (!shellId) {
+                // Phase 1: create shell with whatever the user has filled so far
+                const shell = await createShortShellMutation.mutateAsync({
+                    title: data.title.trim(),
+                    description: data.description.trim() || undefined,
+                    tags: data.tags.length > 0 ? data.tags : undefined,
+                    accessLevel: data.accessLevel,
+                    visibility: data.visibility,
+                });
+                setCurrentShortId(shell._id);
+            } else {
+                // Update existing shell/draft metadata
+                await updateShortMutation.mutateAsync({
+                    shortId: shellId,
+                    data: {
+                        title: data.title,
+                        description: data.description,
+                        tags: data.tags,
+                        accessLevel: data.accessLevel,
+                        visibility: data.visibility,
+                    },
+                });
+            }
+            setAutoSaveStatus('saved');
+            // Reset badge to 'idle' after 3 seconds
+            if (savedBadgeTimer.current) clearTimeout(savedBadgeTimer.current);
+            savedBadgeTimer.current = setTimeout(() => setAutoSaveStatus('idle'), 3000);
+        } catch {
+            setAutoSaveStatus('error');
+            if (savedBadgeTimer.current) clearTimeout(savedBadgeTimer.current);
+            savedBadgeTimer.current = setTimeout(() => setAutoSaveStatus('idle'), 4000);
+        }
+    }, [createShortShellMutation, updateShortMutation]);
+
+    /**
+     * Debounced auto-save effect.
+     * Watches every formData change. Text-field changes (title/description) are debounced
+     * by 1.5 s; selection changes (tags, accessLevel, visibility) fire after 300 ms
+     * so the UI stays responsive without hammering the API.
+     *
+     * Guards:
+     *  - isInitialLoad.current  → skip the first render after data is loaded from the API
+     *  - isUploading / isPolling → skip during video upload phases
+     *  - existingShort?.status === 'published' → don't auto-save published videos
+     */
+    useEffect(() => {
+        if (isInitialLoad.current) return;
+        if (isUploading || isPolling) return;
+        if (existingShort?.status === 'published') return;
+
+        // Capture the snapshot
+        const snapshot = formData;
+
+        if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+        autoSaveTimer.current = setTimeout(() => {
+            // Read from the ref to avoid stale closure of currentShortId
+            performAutoSave(snapshot, currentShortIdRef.current);
+        }, 1500);
+
+        return () => {
+            if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [formData.title, formData.description, formData.tags, formData.accessLevel, formData.visibility]);
 
     /** Format duration in seconds to a readable string. */
     const formatDuration = (seconds: number) => {
@@ -141,8 +272,72 @@ export default function CreateShort() {
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
-    /** Handle video file selection and upload. */
-    const handleVideoUpload = async (file: File) => {
+    /**
+     * V1 Two-phase upload flow:
+     * 1. Ensure a shell exists (create one if not in edit mode)
+     * 2. Get signed upload URL from our backend
+     * 3. Upload directly from the browser to Cloudinary using the signed params
+     * 4. Start polling GET /v1/short-videos/:id/status until videoReady === true
+     */    const addResourceMutation = useAddShortResource();
+    const removeResourceMutation = useRemoveShortResource();
+
+    // ─── Resource form state ─────────────────────────────────────────────────
+    const [resourceTab, setResourceTab] = useState<'file' | 'url'>('file');
+    const [fileResourceName, setFileResourceName] = useState('');
+    const [urlResourceName, setUrlResourceName] = useState('');
+    const [resourceUrl, setResourceUrl] = useState('');
+    const [resourceFile, setResourceFile] = useState<File | null>(null);
+    const resourceFileRef = useRef<HTMLInputElement | null>(null);
+
+    const handleAddFileResource = async () => {
+        if (!currentShortId) return;
+        if (!resourceFile) { toast.error('Please select a file'); return; }
+        const name = fileResourceName || resourceFile.name;
+        try {
+            await addResourceMutation.mutateAsync({
+                shortId: currentShortId,
+                payload: { type: 'file', name, file: resourceFile },
+            });
+            setResourceFile(null);
+            setFileResourceName('');
+            if (resourceFileRef.current) resourceFileRef.current.value = '';
+            toast.success('Resource added!');
+        } catch (err: any) {
+            toast.error(err?.response?.data?.message || 'Failed to add resource');
+        }
+    };
+
+    const handleAddUrlResource = async () => {
+        if (!currentShortId) return;
+        if (!urlResourceName.trim()) { toast.error('Please enter a name'); return; }
+        if (!resourceUrl.trim() || !resourceUrl.startsWith('http')) {
+            toast.error('Please enter a valid URL starting with http(s)://');
+            return;
+        }
+        try {
+            await addResourceMutation.mutateAsync({
+                shortId: currentShortId,
+                payload: { type: 'url', name: urlResourceName.trim(), url: resourceUrl.trim() },
+            });
+            setUrlResourceName('');
+            setResourceUrl('');
+            toast.success('Resource added!');
+        } catch (err: any) {
+            toast.error(err?.response?.data?.message || 'Failed to add resource');
+        }
+    };
+
+    const handleRemoveResource = async (resourceId: string) => {
+        if (!currentShortId) return;
+        try {
+            await removeResourceMutation.mutateAsync({ shortId: currentShortId, resourceId });
+            toast.success('Resource removed');
+        } catch (err: any) {
+            toast.error(err?.response?.data?.message || 'Failed to remove resource');
+        }
+    };
+
+    const handleVideoUpload = useCallback(async (file: File) => {
         setErrors(prev => ({ ...prev, video: '' }));
 
         if (!file.type.startsWith('video/')) {
@@ -150,7 +345,7 @@ export default function CreateShort() {
             return;
         }
 
-        // 2GB limit
+        // 2 GB limit
         const maxSize = 2 * 1024 * 1024 * 1024;
         if (file.size > maxSize) {
             setErrors(prev => ({ ...prev, video: 'File size exceeds the 2GB limit' }));
@@ -162,53 +357,59 @@ export default function CreateShort() {
         setUploadProgress(0);
 
         try {
-            const result = await uploadShortVideo(file, (progress) => {
-                setUploadProgress(progress);
+            // Phase 1 — ensure a shell exists
+            let shellId = currentShortIdRef.current;
+            if (!shellId) {
+                const shell = await createShortShellMutation.mutateAsync({
+                    title: formData.title.trim() || file.name,
+                    description: formData.description.trim() || 'Draft short video',
+                    tags: formData.tags.length > 0 ? formData.tags : undefined,
+                    accessLevel: formData.accessLevel,
+                    visibility: formData.visibility,
+                });
+                shellId = shell._id;
+                setCurrentShortId(shellId);
+            }
+
+            // Phase 2 — get signed upload params from our backend
+            const signedData = await getSignedUploadUrlMutation.mutateAsync(shellId);
+
+            // Phase 3 — upload directly from the browser to Cloudinary
+            const formPayload = new FormData();
+            formPayload.append('file', file);
+            Object.entries(signedData.fields).forEach(([key, val]) => {
+                formPayload.append(key, String(val));
             });
 
-            const videoData = {
-                cloudinaryUrl: result.cloudinaryUrl,
-                cloudinaryId: result.cloudinaryId,
-                thumbnailUrl: result.thumbnailUrl,
-                durationSeconds: result.durationSeconds,
-            };
+            // Use XMLHttpRequest so we can track progress
+            await new Promise<void>((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', signedData.uploadUrl, true);
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        setUploadProgress(Math.round((e.loaded / e.total) * 100));
+                    }
+                };
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) resolve();
+                    else reject(new Error(`Cloudinary upload failed: ${xhr.statusText}`));
+                };
+                xhr.onerror = () => reject(new Error('Network error during upload'));
+                xhr.send(formPayload);
+            });
 
-            setFormData((prev) => ({
-                ...prev,
-                ...videoData,
-            }));
-
-            // Auto-save to backend
-            if (isEditMode && currentShortId) {
-                await updateShortMutation.mutateAsync({
-                    shortId: currentShortId,
-                    data: videoData,
-                });
-                toast.success('Video uploaded and saved!');
-            } else {
-                // Create new draft
-                const newShort = await createShortMutation.mutateAsync({
-                    ...formData,
-                    ...videoData,
-                    title: formData.title || file.name, // Use filename as fallback title
-                    description: formData.description || 'Draft', // Fallback description
-                    status: 'draft',
-                });
-                
-                toast.success('Video uploaded and draft created!');
-                
-                // Keep user on the same page; switch to edit mode without navigation
-                setCurrentShortId(newShort._id);
-            }
+            // Phase 4 — start polling; the Cloudinary webhook will update the record
+            setIsUploading(false);
+            setIsPolling(true);
+            toast.info('Video uploaded — waiting for processing...');
         } catch (error) {
             console.error('Video upload error:', error);
-            toast.error('Failed to upload video or save draft. Please try again.');
+            toast.error('Failed to upload video. Please try again.');
             setVideoFile(null);
-        } finally {
             setIsUploading(false);
             setUploadProgress(0);
         }
-    };
+    }, [currentShortId, formData, createShortShellMutation, getSignedUploadUrlMutation]);
 
     /** Remove the uploaded video using atomic backend operation. */
     const handleRemoveVideo = async () => {
@@ -292,23 +493,39 @@ export default function CreateShort() {
         return isValid;
     };
 
-    /** Save as draft. */
+    /**
+     * Save metadata as draft.
+     *
+     * - If no shell exists yet, create one (POST /v1/short-videos).
+     * - If shell already exists, update metadata (PUT /short-videos/:id).
+     */
     const handleSaveDraft = async () => {
-        // No validation for drafts
         setIsSaving(true);
         try {
-            if (isEditMode && currentShortId) {
+            if (currentShortId) {
+                // Update existing shell/draft metadata
                 await updateShortMutation.mutateAsync({
                     shortId: currentShortId,
-                    data: { ...formData, status: 'draft' as ShortVideoStatus },
+                    data: {
+                        title: formData.title,
+                        description: formData.description,
+                        tags: formData.tags,
+                        accessLevel: formData.accessLevel,
+                        visibility: formData.visibility,
+                    },
                 });
                 toast.success('Short video saved as draft!');
             } else {
-                await createShortMutation.mutateAsync({
-                    ...formData,
-                    status: 'draft' as ShortVideoStatus,
+                // Create a new shell (Phase 1 of V1 flow)
+                const shell = await createShortShellMutation.mutateAsync({
+                    title: formData.title || 'Untitled Draft',
+                    description: formData.description || 'Draft',
+                    tags: formData.tags.length > 0 ? formData.tags : undefined,
+                    accessLevel: formData.accessLevel,
+                    visibility: formData.visibility,
                 });
-                toast.success('Short video created as draft!');
+                setCurrentShortId(shell._id);
+                toast.success('Draft created!');
             }
             navigate(rolePath ? `/${rolePath}/content/drafts/shorts` : '/content/drafts/shorts');
         } catch (error) {
@@ -319,23 +536,49 @@ export default function CreateShort() {
         }
     };
 
-    /** Submit for review (sets status to pending). */
+    /**
+     * Submit for review — sets status to 'pending'.
+     *
+     * Training Admin (trainer) and Clinical Learner (trainee) use this action.
+     * They cannot publish directly; the short goes to the Super Admin for review.
+     */
     const handleSubmitForReview = async () => {
         if (!validateForm()) return;
 
         setIsSubmitting(true);
         try {
-            if (isEditMode && currentShortId) {
-                await updateShortMutation.mutateAsync({
-                    shortId: currentShortId,
-                    data: { ...formData, status: 'pending' as ShortVideoStatus },
+            // Ensure a shell exists before changing status
+            let shellId = currentShortId;
+            if (!shellId) {
+                const shell = await createShortShellMutation.mutateAsync({
+                    title: formData.title,
+                    description: formData.description,
+                    tags: formData.tags,
+                    accessLevel: formData.accessLevel,
+                    visibility: formData.visibility,
                 });
+                shellId = shell._id;
+                setCurrentShortId(shellId);
             } else {
-                await createShortMutation.mutateAsync({
-                    ...formData,
-                    status: 'pending' as ShortVideoStatus,
+                // Save latest metadata first
+                await updateShortMutation.mutateAsync({
+                    shortId: shellId,
+                    data: {
+                        title: formData.title,
+                        description: formData.description,
+                        tags: formData.tags,
+                        accessLevel: formData.accessLevel,
+                        visibility: formData.visibility,
+                    },
                 });
             }
+
+            // Use change-status endpoint (trainer/trainee can only set pending)
+            await changeStatusMutation.mutateAsync({
+                shortId: shellId,
+                payload: { status: 'pending' },
+            });
+
             toast.success('Short video submitted for review!');
             navigate(rolePath ? `/${rolePath}/content/reviews/shorts` : '/content/reviews/shorts');
         } catch (error) {
@@ -346,23 +589,46 @@ export default function CreateShort() {
         }
     };
 
-    /** Publish directly (admin only). */
+    /**
+     * Publish directly (Super Admin only).
+     *
+     * Uses POST /v1/short-videos/:id/publish which requires:
+     * - cloudinaryId set (video uploaded)
+     * - title, description, ≥1 tag
+     *
+     * If no shell exists yet, create one first then publish.
+     */
     const handlePublish = async () => {
         if (!validateForm()) return;
 
         setIsPublishing(true);
         try {
-            if (isEditMode && currentShortId) {
-                await updateShortMutation.mutateAsync({
-                    shortId: currentShortId,
-                    data: { ...formData, status: 'published' as ShortVideoStatus },
+            let shellId = currentShortId;
+            if (!shellId) {
+                const shell = await createShortShellMutation.mutateAsync({
+                    title: formData.title,
+                    description: formData.description,
+                    tags: formData.tags,
+                    accessLevel: formData.accessLevel,
+                    visibility: formData.visibility,
                 });
+                shellId = shell._id;
+                setCurrentShortId(shellId);
             } else {
-                await createShortMutation.mutateAsync({
-                    ...formData,
-                    status: 'published' as ShortVideoStatus,
+                // Save latest metadata before publishing
+                await updateShortMutation.mutateAsync({
+                    shortId: shellId,
+                    data: {
+                        title: formData.title,
+                        description: formData.description,
+                        tags: formData.tags,
+                        accessLevel: formData.accessLevel,
+                        visibility: formData.visibility,
+                    },
                 });
             }
+
+            await publishShortMutation.mutateAsync(shellId);
             toast.success('Short video published!');
             navigate(rolePath ? `/${rolePath}/content/shorts` : '/content/shorts');
         } catch (error) {
@@ -379,7 +645,7 @@ export default function CreateShort() {
     };
 
     const isAdmin = rolePath === 'super-admin';
-    const isProcessing = isSaving || isSubmitting || isPublishing || isUploading;
+    const isProcessing = isSaving || isSubmitting || isPublishing || isUploading || isPolling || autoSaveStatus === 'saving';
 
     /** Handle subtitle retry */
     const handleRetrySubtitles = () => {
@@ -406,6 +672,28 @@ export default function CreateShort() {
                             {isEditMode ? 'Update your short video details' : 'Upload and configure a new short video'}
                         </p>
                     </div>
+                </div>
+
+                {/* Auto-save status badge */}
+                <div className="flex items-center gap-2 min-h-[28px]">
+                    {autoSaveStatus === 'saving' && (
+                        <span className="flex items-center gap-1.5 text-xs text-muted-foreground animate-in fade-in">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Saving…
+                        </span>
+                    )}
+                    {autoSaveStatus === 'saved' && (
+                        <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 animate-in fade-in">
+                            <Cloud className="h-3.5 w-3.5" />
+                            Saved
+                        </span>
+                    )}
+                    {autoSaveStatus === 'error' && (
+                        <span className="flex items-center gap-1.5 text-xs text-destructive animate-in fade-in">
+                            <CloudOff className="h-3.5 w-3.5" />
+                            Save failed
+                        </span>
+                    )}
                 </div>
             </div>
 
@@ -540,7 +828,23 @@ export default function CreateShort() {
                                         <Progress value={uploadProgress} className="w-full max-w-xs" />
                                     </div>
                                 </div>
+                            ) : isPolling ? (
+                                <div className="rounded-lg border-2 border-dashed border-primary/30 p-8">
+                                    <div className="flex flex-col items-center gap-4">
+                                        <div className="p-4 rounded-full bg-primary/10">
+                                            <Loader2 className="h-8 w-8 text-primary animate-spin" />
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="font-medium">Processing video...</p>
+                                            <p className="text-sm text-muted-foreground">
+                                                Cloudinary is transcoding your video. This may take a few moments.
+                                            </p>
+                                        </div>
+                                        <Progress value={undefined} className="w-full max-w-xs animate-pulse" />
+                                    </div>
+                                </div>
                             ) : (
+
                                 <div
                                     className="rounded-lg border-2 border-dashed border-muted-foreground/25 p-8 hover:border-primary/50 transition-colors cursor-pointer"
                                     onClick={() => videoInputRef.current?.click()}
@@ -725,6 +1029,188 @@ export default function CreateShort() {
                             onRetry={handleRetrySubtitles}
                         />
                     )}
+
+                    {/* ── Resources Card ──────────────────────────────────── */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <Paperclip className="h-4 w-4" />
+                                Resources
+                            </CardTitle>
+                            <CardDescription>
+                                Attach supplementary files or links (max 10)
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="flex flex-col gap-4">
+                            {/* Existing resources list */}
+                            {existingShort?.resources && existingShort.resources.length > 0 ? (
+                                <div className="flex flex-col gap-2">
+                                    {existingShort.resources.map((res) => (
+                                        <div
+                                            key={res._id}
+                                            className="flex items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2"
+                                        >
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                                <div className="min-w-0">
+                                                    <p className="text-sm font-medium truncate">{res.name}</p>
+                                                    <a
+                                                        href={res.url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="flex items-center gap-1 text-xs text-primary hover:underline truncate"
+                                                    >
+                                                        <ExternalLink className="h-3 w-3 shrink-0" />
+                                                        <span className="truncate">{res.url}</span>
+                                                    </a>
+                                                </div>
+                                            </div>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="shrink-0 size-7 text-destructive hover:text-destructive"
+                                                disabled={removeResourceMutation.isPending}
+                                                onClick={() => handleRemoveResource(res._id)}
+                                            >
+                                                {removeResourceMutation.isPending ? (
+                                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                                ) : (
+                                                    <Trash2 className="h-3 w-3" />
+                                                )}
+                                            </Button>
+                                        </div>
+                                    ))}
+                                    <Separator />
+                                </div>
+                            ) : existingShort?.resources?.length === 0 ? (
+                                <p className="text-xs text-muted-foreground text-center py-2">
+                                    No resources attached yet.
+                                </p>
+                            ) : null}
+
+                            {/* Add resource — locked until a shell exists */}
+                            {!currentShortId ? (
+                                <div className="rounded-lg border border-dashed border-muted-foreground/30 p-4 text-center">
+                                    <Paperclip className="h-5 w-5 mx-auto mb-1 text-muted-foreground/50" />
+                                    <p className="text-xs text-muted-foreground">
+                                        Save a draft first to attach resources
+                                    </p>
+                                </div>
+                            ) : (
+                                <Tabs
+                                    value={resourceTab}
+                                    onValueChange={(v) => setResourceTab(v as 'file' | 'url')}
+                                >
+                                    <TabsList className="w-full">
+                                        <TabsTrigger value="file" className="flex-1 gap-1.5">
+                                            <FileText className="h-3.5 w-3.5" />
+                                            Upload File
+                                        </TabsTrigger>
+                                        <TabsTrigger value="url" className="flex-1 gap-1.5">
+                                            <Link className="h-3.5 w-3.5" />
+                                            Add Link
+                                        </TabsTrigger>
+                                    </TabsList>
+
+                                    {/* ─ File upload tab ─────────────────── */}
+                                    <TabsContent value="file" className="flex flex-col gap-3 mt-3">
+                                        <div
+                                            className="flex flex-col items-center gap-3 rounded-lg border-2 border-dashed border-muted-foreground/25 p-4 cursor-pointer hover:border-primary/50 transition-colors"
+                                            onClick={() => resourceFileRef.current?.click()}
+                                        >
+                                            <Upload className="h-5 w-5 text-muted-foreground" />
+                                            {resourceFile ? (
+                                                <div className="text-center">
+                                                    <p className="text-sm font-medium truncate max-w-[200px]">{resourceFile.name}</p>
+                                                    <p className="text-xs text-muted-foreground">
+                                                        {(resourceFile.size / 1024).toFixed(1)} KB
+                                                    </p>
+                                                </div>
+                                            ) : (
+                                                <p className="text-xs text-muted-foreground text-center">
+                                                    Click to select a PDF, DOC, image, or other file
+                                                </p>
+                                            )}
+                                        </div>
+                                        <input
+                                            ref={resourceFileRef}
+                                            type="file"
+                                            className="hidden"
+                                            onChange={(e) => setResourceFile(e.target.files?.[0] ?? null)}
+                                        />
+                                        <div className="flex flex-col gap-1.5">
+                                            <Label htmlFor="resource-file-name" className="text-xs">
+                                                Display name <span className="text-muted-foreground">(optional)</span>
+                                            </Label>
+                                            <Input
+                                                id="resource-file-name"
+                                                value={fileResourceName}
+                                                onChange={(e) => setFileResourceName(e.target.value)}
+                                                placeholder={resourceFile?.name ?? 'e.g. Lecture Notes'}
+                                                className="h-8 text-sm"
+                                            />
+                                        </div>
+                                        <Button
+                                            size="sm"
+                                            className="w-full gap-1.5"
+                                            onClick={handleAddFileResource}
+                                            disabled={!resourceFile || addResourceMutation.isPending}
+                                        >
+                                            {addResourceMutation.isPending ? (
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                            ) : (
+                                                <Plus className="h-3.5 w-3.5" />
+                                            )}
+                                            Attach File
+                                        </Button>
+                                    </TabsContent>
+
+                                    {/* ─ URL link tab ────────────────────── */}
+                                    <TabsContent value="url" className="flex flex-col gap-3 mt-3">
+                                        <div className="flex flex-col gap-1.5">
+                                            <Label htmlFor="resource-url-name" className="text-xs">
+                                                Name <span className="text-destructive">*</span>
+                                            </Label>
+                                            <Input
+                                                id="resource-url-name"
+                                                value={urlResourceName}
+                                                onChange={(e) => setUrlResourceName(e.target.value)}
+                                                placeholder="e.g. Reference Article"
+                                                className="h-8 text-sm"
+                                            />
+                                        </div>
+                                        <div className="flex flex-col gap-1.5">
+                                            <Label htmlFor="resource-url" className="text-xs">
+                                                URL <span className="text-destructive">*</span>
+                                            </Label>
+                                            <Input
+                                                id="resource-url"
+                                                type="url"
+                                                value={resourceUrl}
+                                                onChange={(e) => setResourceUrl(e.target.value)}
+                                                placeholder="https://example.com"
+                                                className="h-8 text-sm"
+                                            />
+                                        </div>
+                                        <Button
+                                            size="sm"
+                                            className="w-full gap-1.5"
+                                            onClick={handleAddUrlResource}
+                                            disabled={addResourceMutation.isPending}
+                                        >
+                                            {addResourceMutation.isPending ? (
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                            ) : (
+                                                <Link className="h-3.5 w-3.5" />
+                                            )}
+                                            Add Link
+                                        </Button>
+                                    </TabsContent>
+                                </Tabs>
+                            )}
+                        </CardContent>
+                    </Card>
+
 
                     {/* Actions Card */}
                     <Card>
