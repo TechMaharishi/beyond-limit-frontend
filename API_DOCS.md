@@ -734,3 +734,394 @@ curl -X POST "http://localhost:5000/api/profiles/switch" \
   }
 }
 ```
+
+---
+
+## 4. Tags Management
+**Source:** `src/routes/tags/tags.ts`
+**Note:** These endpoints are primarily for administrators to manage video/content tags.
+
+### 4.1 Create Tag
+**Endpoint:** `POST /admin/create-tags`
+- **Permissions Required:** `tag: ["create"]`
+- **Description:** Creates a new content tag. The slug is automatically generated from the name (lowercase, spaces replaced by hyphens).
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/admin/create-tags" \
+  -H "Authorization: Bearer admin_session_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Clinical Practice"
+  }'
+```
+
+**Response Example (201 Created):**
+```json
+{
+  "success": true,
+  "message": "Tag created",
+  "data": {
+    "_id": "69f1a2b3c4d5e6f7g8h9i0j1",
+    "name": "Clinical Practice",
+    "slug": "clinical-practice",
+    "active": true,
+    "createdBy": "69ea8ad06f8ba4f6a0f6bf28",
+    "createdAt": "2026-05-03T12:00:00.000Z",
+    "updatedAt": "2026-05-03T12:00:00.000Z"
+  }
+}
+```
+
+### 4.2 List All Tags
+**Endpoint:** `GET /admin/tags`
+- **Permissions Required:** `tag: ["view"]`
+- **Description:** Retrieves all tags, including inactive ones, sorted by most recently updated.
+
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:5000/api/admin/tags" \
+  -H "Authorization: Bearer admin_session_token"
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Tags fetched",
+  "data": [
+    {
+      "_id": "69f1a2b3c4d5e6f7g8h9i0j1",
+      "name": "Clinical Practice",
+      "slug": "clinical-practice",
+      "active": true,
+      "createdBy": "69ea8ad06f8ba4f6a0f6bf28",
+      "createdAt": "2026-05-03T12:00:00.000Z",
+      "updatedAt": "2026-05-03T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+### 4.3 Deactivate Tag
+**Endpoint:** `PUT /admin/tags/:id/deactivate`
+- **Permissions Required:** `tag: ["delete"]`
+- **Description:** Soft-deletes a tag by setting `active` to `false`.
+
+**cURL Example:**
+```bash
+curl -X PUT "http://localhost:5000/api/admin/tags/69f1a2b3c4d5e6f7g8h9i0j1/deactivate" \
+  -H "Authorization: Bearer admin_session_token"
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Tag deactivated",
+  "data": {
+    "_id": "69f1a2b3c4d5e6f7g8h9i0j1",
+    "name": "Clinical Practice",
+    "slug": "clinical-practice",
+    "active": false,
+    "deletedAt": "2026-05-03T12:05:00.000Z"
+  }
+}
+```
+
+### 4.4 Activate Tag
+**Endpoint:** `PUT /admin/tags/:id/activate`
+- **Permissions Required:** `tag: ["update"]`
+- **Description:** Reactivates a soft-deleted tag.
+
+**cURL Example:**
+```bash
+curl -X PUT "http://localhost:5000/api/admin/tags/69f1a2b3c4d5e6f7g8h9i0j1/activate" \
+  -H "Authorization: Bearer admin_session_token"
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Tag activated",
+  "data": {
+    "_id": "69f1a2b3c4d5e6f7g8h9i0j1",
+    "name": "Clinical Practice",
+    "slug": "clinical-practice",
+    "active": true
+  }
+}
+```
+
+### 4.5 Hard Delete Tag
+**Endpoint:** `DELETE /admin/tags/:id`
+- **Permissions Required:** `tag: ["delete"]`
+- **Description:** Permanently removes a tag from the database.
+
+**cURL Example:**
+```bash
+curl -X DELETE "http://localhost:5000/api/admin/tags/69f1a2b3c4d5e6f7g8h9i0j1" \
+  -H "Authorization: Bearer admin_session_token"
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Tag hard deleted",
+  "data": {
+    "_id": "69f1a2b3c4d5e6f7g8h9i0j1",
+    "name": "Clinical Practice"
+  }
+}
+```
+
+---
+
+## 5. Short Videos Management
+**Sources:** `src/routes/content-management/short-videos.ts`, `src/routes/content-management/short-videos-v1.ts`
+
+### 5.0 Status Lifecycle & Role Permissions
+
+#### Who Can Create
+| Role | Can Create? | Initial Status Options |
+|------|-------------|----------------------|
+| Admin | ✅ | `draft`, `pending`, `published`, `rejected` |
+| Trainer | ✅ | `draft`, `pending` only |
+| Trainee | ✅ | `draft`, `pending` only |
+| User | ❌ | — |
+
+#### Status Transitions
+```
+Trainer / Trainee:
+  draft ──[creator]──> pending   (submit for admin review)
+  pending ──[creator]──> draft   (pull back to draft)
+
+Admin only:
+  pending ──[admin]──> published  (approve)
+  pending ──[admin]──> rejected   (reject with reason)
+  published ──[admin]──> rejected (unpublish)
+  any ──[admin]──> any            (admin can set any status)
+```
+
+#### Permission Summary
+| Permission | Granted To | Controls |
+|---|---|---|
+| `shortVideo:create` | Admin, Trainer, Trainee | Create new videos |
+| `shortVideo:view` | All authenticated | View published; owner/admin sees own drafts |
+| `shortVideo:update` | Admin, Trainer, Trainee | Edit metadata, resources, video file |
+| `shortVideo:delete` | Admin, Trainer, Trainee | Delete own videos; Admin deletes any |
+| `shortVideoStatus:view` | Admin, Trainer, Trainee | Access management listing (all statuses) |
+| `shortVideoStatus:create` | Admin only | Publish or reject videos |
+
+> **Note (V1 flow):** In the V1 two-phase upload flow, the `POST /v1/short-videos/:id/publish` endpoint lets the **owner or admin** publish directly from `draft` after the video file has been uploaded — bypassing the `pending` step. Use the V0 `change-status` endpoint if the review/approval workflow is required.
+
+---
+
+### 5.1 Change Video Status (Review Flow)
+**Endpoint:** `PUT /admin/change-status-short-video/:id`
+- **Description:** The primary endpoint for the approval workflow.
+  - **Trainer / Trainee (own videos only):** may set `draft` or `pending`.
+  - **Admin (any video):** may set any status — `draft`, `pending`, `published`, or `rejected`.
+  - Admin notifies the video owner via push notification when publishing or rejecting.
+
+**cURL Example — Trainer submits for review:**
+```bash
+curl -X PUT "http://localhost:5000/api/admin/change-status-short-video/69f2a3b4c5d6e7f8g9h0i1j2" \
+  -H "Authorization: Bearer TRAINER_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "pending"}'
+```
+
+**cURL Example — Admin approves:**
+```bash
+curl -X PUT "http://localhost:5000/api/admin/change-status-short-video/69f2a3b4c5d6e7f8g9h0i1j2" \
+  -H "Authorization: Bearer ADMIN_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "published"}'
+```
+
+**cURL Example — Admin rejects:**
+```bash
+curl -X PUT "http://localhost:5000/api/admin/change-status-short-video/69f2a3b4c5d6e7f8g9h0i1j2" \
+  -H "Authorization: Bearer ADMIN_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "rejected", "rejectReason": "Content does not meet guidelines"}'
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Short video status updated",
+  "data": {
+    "_id": "69f2a3b4c5d6e7f8g9h0i1j2",
+    "status": "published"
+  }
+}
+```
+
+---
+
+### 5.2 Create Short Video Shell — V1 (Two-Phase Upload)
+**Endpoint:** `POST /v1/short-videos`
+- **Permissions Required:** `shortVideo: ["create"]`
+- **Description:** Phase 1 of the V1 upload flow. Creates a `draft` shell record with metadata only — no video file yet. Title and description are required.
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/v1/short-videos" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Intro to Clinical Research",
+    "description": "A short overview of modern clinical trials.",
+    "tags": ["clinical", "research"],
+    "accessLevel": "free",
+    "visibility": "all"
+  }'
+```
+
+**Response Example (201 Created):**
+```json
+{
+  "success": true,
+  "message": "Short video shell created",
+  "data": {
+    "_id": "69f2a3b4c5d6e7f8g9h0i1j2",
+    "title": "Intro to Clinical Research",
+    "status": "draft",
+    "videoReady": false
+  }
+}
+```
+
+### 5.3 Get Signed Upload URL — V1
+**Endpoint:** `POST /v1/short-videos/:id/signed-upload-url`
+- **Permissions Required:** Owner or Admin.
+- **Description:** Phase 2. Generates signed parameters for a direct frontend-to-Cloudinary upload. Blocked if status is `published`.
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/v1/short-videos/69f2a3b4c5d6e7f8g9h0i1j2/signed-upload-url" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "uploadUrl": "https://api.cloudinary.com/v1_1/your-cloud/video/upload",
+    "fields": {
+      "api_key": "your_key",
+      "timestamp": 123456789,
+      "signature": "hmac_signature",
+      "public_id": "short-videos/69f2a3b4c5d6e7f8g9h0i1j2",
+      "notification_url": "http://localhost:5000/api/v1/webhooks/cloudinary/upload-complete"
+    }
+  }
+}
+```
+
+### 5.4 Check Upload Status — V1 (Polling)
+**Endpoint:** `GET /v1/short-videos/:id/status`
+- **Permissions Required:** Owner or Admin.
+- **Description:** Lightweight polling endpoint. The frontend calls this after upload to detect when the Cloudinary webhook has processed the video (`videoReady: true`).
+
+**Response Example:**
+```json
+{
+  "success": true,
+  "data": {
+    "status": "draft",
+    "videoReady": true,
+    "durationSeconds": 45.5,
+    "subtitleStatus": "pending"
+  }
+}
+```
+
+### 5.5 Publish Short Video — V1
+**Endpoint:** `POST /v1/short-videos/:id/publish`
+- **Permissions Required:** Owner or Admin.
+- **Description:** Phase 3. Directly transitions status from `draft` → `published`. Requires `cloudinaryId` set (video uploaded), `title`, `description`, and at least one tag. Use this for immediate publish without the admin review step. For the review/approval workflow use `PUT /admin/change-status-short-video/:id` instead.
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/v1/short-videos/69f2a3b4c5d6e7f8g9h0i1j2/publish" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Short video published",
+  "data": {
+    "_id": "69f2a3b4c5d6e7f8g9h0i1j2",
+    "status": "published"
+  }
+}
+```
+
+---
+
+### 5.6 Management Endpoints (V0)
+**Source:** `src/routes/content-management/short-videos.ts`
+
+#### List Videos (Management Dashboard)
+**Endpoint:** `GET /short-videos`
+- **Permissions Required:** `shortVideoStatus: ["view"]`
+- **Description:** Paginated list for admin/trainer/trainee dashboard. Admin sees all non-draft videos plus their own drafts. Creators see their own videos only. Supports `?status=`, `?tags=`, and `?search=` filters.
+
+#### List Published Videos (End-User Feed)
+**Endpoint:** `GET /short-videos/published-videos`
+- **Description:** Paginated list of `published` videos visible to the authenticated user. Respects `visibility` (`clinicians` / `users` / `all`) and `accessLevel` (`free` / `develop` / `master`) gates. Includes per-video watch progress.
+
+#### Get Single Video
+**Endpoint:** `GET /short-videos/:id`
+- **Description:** Published videos: accessible to all authenticated users (subject to visibility/tier gates). Draft / pending / rejected: owner + admin only.
+
+#### Update Video Metadata
+**Endpoint:** `PUT /short-videos/:id`
+- **Permissions Required:** `shortVideo: ["update"]` — Owner or Admin.
+- **Description:** Update title, description, tags, accessLevel, visibility, thumbnail, or video file. Trainers/trainees cannot set status to `published` or `rejected` via this endpoint (use change-status instead).
+
+#### Delete Video
+**Endpoint:** `DELETE /short-videos/:id`
+- **Permissions Required:** `shortVideo: ["delete"]` — Owner or Admin.
+- **Description:** Permanently deletes the record and all associated Cloudinary assets (video + thumbnail).
+
+#### Remove Video File Only
+**Endpoint:** `DELETE /short-videos/:id/video`
+- **Permissions Required:** Owner or Admin.
+- **Description:** Removes the Cloudinary video asset but keeps the metadata record (useful to re-upload).
+
+#### Track Watch Progress
+**Endpoint:** `POST /short-videos/:id/progress`
+- **Description:** Records the user's watch position. Idempotent — stores the maximum `watchedSeconds` seen. For `user`-role accounts, tracks by `activeProfileId`.
+
+#### Get Watch Progress
+**Endpoint:** `GET /short-videos/:id/progress`
+- **Description:** Returns the current `watchedSeconds` and `completed` flag for the authenticated user (or active profile).
+
+#### Manage Resources
+**Endpoint:** `POST /short-videos/:id/resources` — Add a file/URL resource (max 10).
+**Endpoint:** `DELETE /short-videos/:id/resources/:resourceId` — Remove a resource and its Cloudinary asset.
+
+#### Retry Subtitles
+**Endpoint:** `POST /short-videos/:id/retry-subtitles`
+- **Description:** Manually re-triggers the captioning pipeline for videos where `subtitleStatus` is `failed`.
+
+---
+
+### 5.7 Webhook — Cloudinary Upload Complete
+**Endpoint:** `POST /v1/webhooks/cloudinary/upload-complete`
+- **Security**: Verifies the `X-Cld-Signature` header using your Cloudinary API Secret to confirm the request originated from Cloudinary.
+- **Actions**:
+  1. Validates `notification_type` is `upload`.
+  2. Extracts `shortVideoId` from the `public_id` path.
+  3. Updates the MongoDB record: sets `cloudinaryId`, `durationSeconds`, `cloudinaryUrl`, and `thumbnailUrl`.
+  4. **Subtitle Pipeline**: Sets `subtitle_status` to `pending` with a `not_before = now + 2min` delay, signalling the background Caption Worker to pick up the video after Cloudinary transcoding completes.
