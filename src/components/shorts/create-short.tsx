@@ -104,7 +104,9 @@ export default function CreateShort() {
     const currentShortIdRef = useRef<string | undefined>(shortId);
     useEffect(() => { currentShortIdRef.current = currentShortId; }, [currentShortId]);
 
-    const isEditMode = Boolean(currentShortId);
+    // isEditMode is true only when the route already had a shortId — stays false during create flow
+    // even after auto-save creates a shell and sets currentShortId
+    const isEditMode = Boolean(shortId);
     const [formData, setFormData] = useState<ShortFormData>(INITIAL_FORM_DATA);
     const [playbackUrl, setPlaybackUrl] = useState<string>('');
     const sanitizeUrl = (u: string) => (u || '').trim().replace(/^`|`$/g, '');
@@ -185,6 +187,7 @@ export default function CreateShort() {
     // ─── Auto-save state ───────────────────────────────────────────────────────
     type AutoSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
     const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus>('idle');
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const savedBadgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -195,8 +198,8 @@ export default function CreateShort() {
      * Silent — does NOT show toast (status badge in header is used instead).
      */
     const performAutoSave = useCallback(async (data: ShortFormData, shellId?: string) => {
-        // Nothing to save if title is blank and no shell exists
-        if (!shellId && !data.title.trim()) return;
+        // Both title and description are required to create a shell — don't attempt until both are present
+        if (!shellId && (!data.title.trim() || !data.description.trim())) return;
 
         setAutoSaveStatus('saving');
         try {
@@ -243,12 +246,19 @@ export default function CreateShort() {
      * Guards:
      *  - isInitialLoad.current  → skip the first render after data is loaded from the API
      *  - isUploading / isPolling → skip during video upload phases
-     *  - existingShort?.status === 'published' → don't auto-save published videos
+     *  - existingShort?.status === 'published' → don't auto-save; track unsaved changes instead
      */
     useEffect(() => {
         if (isInitialLoad.current) return;
         if (isUploading || isPolling) return;
-        if (existingShort?.status === 'published') return;
+
+        // Published videos are not auto-saved — mark as unsaved so the UI warns the user
+        if (existingShort?.status === 'published') {
+            setHasUnsavedChanges(true);
+            return;
+        }
+
+        setHasUnsavedChanges(false);
 
         // Capture the snapshot
         const snapshot = formData;
@@ -352,6 +362,8 @@ export default function CreateShort() {
             return;
         }
 
+        // Cancel any pending auto-save to prevent a race with the upload's own shell creation
+        if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
         setVideoFile(file);
         setIsUploading(true);
         setUploadProgress(0);
@@ -480,7 +492,8 @@ export default function CreateShort() {
             newErrors.description = 'Description is required';
             isValid = false;
         }
-        if (!formData.cloudinaryUrl) {
+        // Accept the video if it's already processed (cloudinaryUrl set) or currently uploading/polling
+        if (!formData.cloudinaryUrl && !isUploading && !isPolling) {
             newErrors.video = 'Video upload is required';
             isValid = false;
         }
@@ -500,6 +513,8 @@ export default function CreateShort() {
      * - If shell already exists, update metadata (PUT /short-videos/:id).
      */
     const handleSaveDraft = async () => {
+        // Cancel any pending debounced auto-save to prevent a double-create race
+        if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
         setIsSaving(true);
         try {
             if (currentShortId) {
@@ -521,6 +536,7 @@ export default function CreateShort() {
                         payload: { status: 'draft' },
                     });
                 }
+                setHasUnsavedChanges(false);
                 toast.success('Short video saved as draft!');
             } else {
                 // Create a new shell (Phase 1 of V1 flow)
@@ -551,7 +567,7 @@ export default function CreateShort() {
      */
     const handleSubmitForReview = async () => {
         if (!validateForm()) return;
-
+        if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
         setIsSubmitting(true);
         try {
             // Ensure a shell exists before changing status
@@ -607,7 +623,7 @@ export default function CreateShort() {
      */
     const handlePublish = async () => {
         if (!validateForm()) return;
-
+        if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
         setIsPublishing(true);
         try {
             let shellId = currentShortId;
@@ -699,6 +715,12 @@ export default function CreateShort() {
                         <span className="flex items-center gap-1.5 text-xs text-destructive animate-in fade-in">
                             <CloudOff className="h-3.5 w-3.5" />
                             Save failed
+                        </span>
+                    )}
+                    {hasUnsavedChanges && autoSaveStatus === 'idle' && (
+                        <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 animate-in fade-in">
+                            <AlertCircle className="h-3.5 w-3.5" />
+                            Unsaved changes — click "Save as Draft" to save
                         </span>
                     )}
                 </div>
@@ -1034,6 +1056,7 @@ export default function CreateShort() {
                             hasSubtitleUrl={!!subtitleUrl}
                             isRetrying={retrySubtitlesMutation.isPending}
                             onRetry={handleRetrySubtitles}
+                            isAdmin={isAdmin}
                         />
                     )}
 

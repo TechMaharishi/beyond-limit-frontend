@@ -26,6 +26,8 @@ interface SubtitleStatusCardProps {
     shortId?: string;
     /** Called when the user clicks "Generate / Retry Subtitles" */
     onRetry: () => void;
+    /** Only admins can trigger subtitle generation — hides the button for other roles */
+    isAdmin?: boolean;
     /** 'default' shows a full Card, 'slim' shows a compact row for dialogs */
     variant?: 'default' | 'slim';
 }
@@ -79,6 +81,7 @@ export function SubtitleStatusCard({
     hasSubtitleUrl,
     isRetrying,
     onRetry,
+    isAdmin,
     variant = 'default',
 }: SubtitleStatusCardProps) {
     const cfg = status ? STATUS_CONFIG[status] : null;
@@ -118,26 +121,28 @@ export function SubtitleStatusCard({
                         )}
                     </div>
 
-                    <Button
-                        variant={status === 'completed' ? 'secondary' : 'default'}
-                        size="sm"
-                        className="h-8 px-3 text-xs gap-2"
-                        onClick={onRetry}
-                        disabled={isRetrying || !canRetry}
-                    >
-                        {isRetrying ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                            <RefreshCw className="h-3 w-3" />
-                        )}
-                        {isRetrying
-                            ? 'Queuing…'
-                            : isProcessing
-                            ? 'Processing…'
-                            : status === 'completed'
-                            ? 'Regenerate'
-                            : 'Generate'}
-                    </Button>
+                    {isAdmin && (
+                        <Button
+                            variant={status === 'completed' ? 'secondary' : 'default'}
+                            size="sm"
+                            className="h-8 px-3 text-xs gap-2"
+                            onClick={onRetry}
+                            disabled={isRetrying || !canRetry}
+                        >
+                            {isRetrying ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                                <RefreshCw className="h-3 w-3" />
+                            )}
+                            {isRetrying
+                                ? 'Queuing…'
+                                : isProcessing
+                                ? 'Processing…'
+                                : status === 'completed'
+                                ? 'Regenerate'
+                                : 'Generate'}
+                        </Button>
+                    )}
                 </div>
                 
                 {/* Micro-meta row */}
@@ -225,31 +230,33 @@ export function SubtitleStatusCard({
                 )}
 
                 {/* Action button */}
-                <Button
-                    variant={status === 'completed' ? 'outline' : 'default'}
-                    size="sm"
-                    className="w-full"
-                    onClick={onRetry}
-                    disabled={isRetrying || !canRetry}
-                    title={
-                        isProcessing
-                            ? 'Generation is already in progress'
-                            : undefined
-                    }
-                >
-                    {isRetrying ? (
-                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                        <RefreshCw className="mr-2 h-3.5 w-3.5" />
-                    )}
-                    {isRetrying
-                        ? 'Queuing…'
-                        : isProcessing
-                        ? 'Generation in progress…'
-                        : status === 'completed'
-                        ? 'Regenerate Subtitles'
-                        : 'Generate Subtitles'}
-                </Button>
+                {isAdmin && (
+                    <Button
+                        variant={status === 'completed' ? 'outline' : 'default'}
+                        size="sm"
+                        className="w-full"
+                        onClick={onRetry}
+                        disabled={isRetrying || !canRetry}
+                        title={
+                            isProcessing
+                                ? 'Generation is already in progress'
+                                : undefined
+                        }
+                    >
+                        {isRetrying ? (
+                            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                            <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                        )}
+                        {isRetrying
+                            ? 'Queuing…'
+                            : isProcessing
+                            ? 'Generation in progress…'
+                            : status === 'completed'
+                            ? 'Regenerate Subtitles'
+                            : 'Generate Subtitles'}
+                    </Button>
+                )}
             </CardContent>
         </Card>
     );
