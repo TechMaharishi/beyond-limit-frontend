@@ -59,6 +59,7 @@ import {
     Send,
     CheckCircle,
     AlertCircle,
+    XCircle,
     FileText,
     Link,
     Plus,
@@ -677,7 +678,32 @@ export default function CreateShort() {
     };
 
     const isAdmin = rolePath === 'super-admin';
-    const isProcessing = isSaving || isSubmitting || isPublishing || isUploading || isPolling || autoSaveStatus === 'saving';
+    const [rejectReason, setRejectReason] = useState('');
+    const [isRejecting, setIsRejecting] = useState(false);
+
+    const handleReject = async () => {
+        if (!currentShortId) return;
+        if (!rejectReason.trim()) {
+            toast.error('Please enter a rejection reason');
+            return;
+        }
+        if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
+        setIsRejecting(true);
+        try {
+            await changeStatusMutation.mutateAsync({
+                shortId: currentShortId,
+                payload: { status: 'rejected', rejectReason: rejectReason.trim() },
+            });
+            toast.success('Short video rejected');
+            navigate(rolePath ? `/${rolePath}/content/reviews/shorts` : '/content/reviews/shorts');
+        } catch (err: any) {
+            toast.error(err?.response?.data?.message || 'Failed to reject. Please try again.');
+        } finally {
+            setIsRejecting(false);
+        }
+    };
+
+    const isProcessing = isSaving || isSubmitting || isPublishing || isUploading || isPolling || isRejecting || autoSaveStatus === 'saving';
 
     /** Handle subtitle retry */
     const handleRetrySubtitles = () => {
@@ -1307,6 +1333,39 @@ export default function CreateShort() {
                                     )}
                                     {existingShort?.status === 'published' ? 'Update Published' : 'Publish'}
                                 </Button>
+                            )}
+
+                            {/* Admin only: Reject — only shown for pending submissions */}
+                            {isAdmin && existingShort?.status === 'pending' && (
+                                <>
+                                    <Separator />
+                                    <div className="space-y-2">
+                                        <Label htmlFor="reject-reason" className="text-sm font-medium text-destructive">
+                                            Rejection Reason <span className="text-destructive">*</span>
+                                        </Label>
+                                        <Textarea
+                                            id="reject-reason"
+                                            value={rejectReason}
+                                            onChange={(e) => setRejectReason(e.target.value)}
+                                            placeholder="Explain why this video is being rejected…"
+                                            className="min-h-[80px] resize-none text-sm"
+                                            disabled={isProcessing}
+                                        />
+                                    </div>
+                                    <Button
+                                        variant="destructive"
+                                        className="w-full"
+                                        onClick={handleReject}
+                                        disabled={isProcessing || !rejectReason.trim()}
+                                    >
+                                        {isRejecting ? (
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        ) : (
+                                            <XCircle className="mr-2 h-4 w-4" />
+                                        )}
+                                        Reject Submission
+                                    </Button>
+                                </>
                             )}
 
                             <Button
