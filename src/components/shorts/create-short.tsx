@@ -204,7 +204,7 @@ export default function CreateShort() {
                 // Phase 1: create shell with whatever the user has filled so far
                 const shell = await createShortShellMutation.mutateAsync({
                     title: data.title.trim(),
-                    description: data.description.trim() || undefined,
+                    description: data.description.trim() || '',
                     tags: data.tags.length > 0 ? data.tags : undefined,
                     accessLevel: data.accessLevel,
                     visibility: data.visibility,

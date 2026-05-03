@@ -71,19 +71,6 @@ interface ShortVideo {
     updatedAt: string;
 }
 
-interface ShortsResponse {
-    success: boolean;
-    message: string;
-    data: ShortVideo[];
-    meta: {
-        page: number;
-        offset: number;
-        limit: number;
-        total: number;
-        hasNext: boolean;
-    };
-}
-
 interface ShortsManagerProps {
     pageTitle: string;
     defaultStatus: string; // "published" | "pending" | "draft"
