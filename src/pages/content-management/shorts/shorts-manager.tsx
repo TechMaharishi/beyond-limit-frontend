@@ -334,13 +334,9 @@ export function ShortsManager({
                                         {sortBy === "createdAt" && <ArrowUpDown className="h-3 w-3" />}
                                     </div>
                                 </TableHead>
-                                <TableHead
-                                    className="w-[10%] bg-background py-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                                    onClick={() => handleSort("updatedAt")}
-                                >
+                                <TableHead className="w-[10%] bg-background py-2">
                                     <div className="flex items-center gap-1">
                                         Updated At
-                                        {sortBy === "updatedAt" && <ArrowUpDown className="h-3 w-3" />}
                                     </div>
                                 </TableHead>
                                 <TableHead className="w-[50px] bg-background py-2"></TableHead>
@@ -362,7 +358,7 @@ export function ShortsManager({
                                             <div className="flex flex-col items-center justify-center gap-2">
                                                 <AlertCircle className="h-8 w-8" />
                                                 <p>Failed to load shorts</p>
-                                                <Button variant="outline" onClick={() => queryClient.invalidateQueries({ queryKey: ["shorts"] })}>
+                                                <Button variant="outline" onClick={() => queryClient.invalidateQueries({ queryKey: shortsKeys.lists() })}>
                                                     Retry
                                                 </Button>
                                             </div>
@@ -455,9 +451,13 @@ export function ShortsManager({
                                                                 Edit
                                                             </DropdownMenuItem>
                                                             {short.status === 'pending' && rolePath === 'super-admin' && (
-                                                                <DropdownMenuItem onClick={() => handlePublish(short._id)}>
+                                                                <DropdownMenuItem
+                                                                    onClick={() => short.videoReady ? handlePublish(short._id) : undefined}
+                                                                    disabled={!short.videoReady}
+                                                                    title={!short.videoReady ? 'Video is still processing' : undefined}
+                                                                >
                                                                     <CheckCircle className="mr-2 h-4 w-4" />
-                                                                    Publish
+                                                                    {short.videoReady ? 'Publish' : 'Publish (video not ready)'}
                                                                 </DropdownMenuItem>
                                                             )}
                                                             <DropdownMenuItem
@@ -478,9 +478,12 @@ export function ShortsManager({
                                                 Edit
                                             </ContextMenuItem>
                                             {short.status === 'pending' && rolePath === 'super-admin' && (
-                                                <ContextMenuItem onSelect={() => handlePublish(short._id)}>
+                                                <ContextMenuItem
+                                                    onSelect={() => short.videoReady ? handlePublish(short._id) : undefined}
+                                                    disabled={!short.videoReady}
+                                                >
                                                     <CheckCircle className="mr-2 h-4 w-4" />
-                                                    Publish
+                                                    {short.videoReady ? 'Publish' : 'Publish (video not ready)'}
                                                 </ContextMenuItem>
                                             )}
                                             <ContextMenuSeparator />
