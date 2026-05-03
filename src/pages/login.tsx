@@ -56,6 +56,7 @@ function LoginForm({
                 rememberMe,
             })
             if (error) throw error
+            if (!data?.user) throw new Error("Sign in failed. Please try again.")
 
             // Check if user has 'user' role (Individual Learner) and restrict access
             const userRole = (data.user as any).role;

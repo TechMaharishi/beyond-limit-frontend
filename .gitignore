@@ -28,3 +28,21 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Added by code-review-graph
+.code-review-graph/
+
+# AI Agents & Tools
+.agents/
+skills-lock.json
+.mcp.json
+.opencode.json
+.claude/
+.kiro/
+.qoder/
+.trae/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+QODER.md
+.cursorrules
+.windsurfrules
