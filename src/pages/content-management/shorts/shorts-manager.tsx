@@ -50,27 +50,6 @@ import {
 
 /** Types used by short video listing and management. */
 
-interface User {
-    _id: string;
-    name: string;
-    email: string;
-}
-
-interface ShortVideo {
-    _id: string;
-    title: string;
-    description: string;
-    tags: string[];
-    status: "published" | "pending" | "rejected" | "draft";
-    accessLevel: string;
-    createdBy: User;
-    thumbnailUrl: string;
-    cloudinaryUrl: string;
-    durationSeconds: number;
-    createdAt: string;
-    updatedAt: string;
-}
-
 interface ShortsManagerProps {
     pageTitle: string;
     defaultStatus: string; // "published" | "pending" | "draft"
