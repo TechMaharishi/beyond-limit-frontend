@@ -1,0 +1,81 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { FetchUsersParams } from "@/services/assign-course.service";
+import {
+    assignShort,
+    assignShortsBulk,
+    fetchAssignableUsersForShorts,
+    fetchPublishedShortVideos,
+    fetchUserAssignedShorts,
+    unassignShort,
+    type FetchShortsParams,
+} from "@/services/assign-shorts.service";
+import type { AssignableRole } from "@/services/assign-shorts.service";
+
+export function useAssignableUsersForShorts(
+    role: AssignableRole,
+    params: FetchUsersParams = {},
+    enabled = true
+) {
+    return useQuery({
+        queryKey: ["assignable-users-shorts", role, params],
+        queryFn: () => fetchAssignableUsersForShorts(role, params),
+        enabled,
+        staleTime: 2 * 60 * 1000,
+    });
+}
+
+export function usePublishedShortVideos(params: FetchShortsParams = {}) {
+    return useQuery({
+        queryKey: ["published-short-videos", params],
+        queryFn: () => fetchPublishedShortVideos(params),
+        staleTime: 5 * 60 * 1000,
+    });
+}
+
+export function useUserAssignedShorts(
+    userId: string | null,
+    params: { page?: number; limit?: number } = {}
+) {
+    return useQuery({
+        queryKey: ["user-assigned-shorts", userId, params],
+        queryFn: () => fetchUserAssignedShorts(userId!, params),
+        enabled: !!userId,
+        staleTime: 1 * 60 * 1000,
+    });
+}
+
+export function useAssignShort() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: ({ userId, shortVideoId }: { userId: string; shortVideoId: string }) =>
+            assignShort(userId, shortVideoId),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["user-assigned-shorts"] });
+        },
+    });
+}
+
+export function useAssignShortsBulk() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (items: Array<{ userId: string; shortVideoId: string }>) =>
+            assignShortsBulk(items),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["user-assigned-shorts"] });
+        },
+    });
+}
+
+export function useUnassignShort() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: ({ userId, shortVideoId }: { userId: string; shortVideoId: string }) =>
+            unassignShort(userId, shortVideoId),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["user-assigned-shorts"] });
+        },
+    });
+}

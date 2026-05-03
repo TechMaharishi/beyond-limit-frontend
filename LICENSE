@@ -1,0 +1,53 @@
+BLPT Admin Panel Proprietary License v1.0
+
+Copyright (c) 2026 Vishal Kumar
+Author: Vishal Kumar (TechMaharishi)
+GitHub: https://github.com/TechMaharishi
+LinkedIn: https://www.linkedin.com/in/techmaharishi/
+
+Project: Beyond Limits Learning Hub — Admin Panel (the “Software”)
+
+Authorized Parties:
+- Beyond Limits Paediatric Therapy (https://www.beyondlimitstherapy.com.au/)
+- Ravel (https://www.ravel.com.au/), and their employees and contractors engaged directly to build, maintain, or operate the Software for BLPT.
+
+License Grant:
+- Vishal Kumar grants Authorized Parties a non-exclusive, non-transferable, revocable license to:
+  - use, install, run, and deploy the Software,
+  - internally modify and maintain the Software,
+  - create reasonable backups and internal copies,
+solely to operate BLPT’s services and internal systems.
+
+Restrictions:
+- You may not redistribute, publish, or make the Software or its source code available to any third party.
+- You may not sublicense, lease, rent, sell, or offer the Software as a service to third parties.
+- You may not claim ownership of the Software or remove/alter authorship notices or proprietary notices.
+- You may not assign or transfer this license, except with the prior written consent of Vishal Kumar.
+- You may not use the Software to create a competing product intended for public distribution.
+
+Ownership:
+- The Software is proprietary and all intellectual property rights remain with Vishal Kumar.
+- Nothing in this License transfers ownership of the Software.
+
+Third-Party Components:
+- Any third-party libraries bundled with the Software are licensed under their respective terms.
+- This License does not alter third-party licenses; you must comply with them.
+
+Confidentiality:
+- Source code and any non-public documentation are confidential. Authorized Parties must take reasonable measures to prevent unauthorized disclosure.
+
+Warranty Disclaimer:
+- THE SOFTWARE IS PROVIDED “AS IS” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT.
+
+Limitation of Liability:
+- TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL VISHAL KUMAR BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS, REVENUE, DATA, OR BUSINESS INTERRUPTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OF THE SOFTWARE.
+
+Termination:
+- This License terminates automatically if Authorized Parties breach any term. Upon termination, all use must cease and internal copies must be securely destroyed (excluding backups required by law or policy, which must remain inaccessible and not used).
+
+General:
+- If any provision of this License is held invalid, the remaining provisions remain in full force and effect.
+- Changes to this License require written agreement by Vishal Kumar.
+
+Contact:
+- For permissions beyond this License, written consent must be obtained from Vishal Kumar (TechMaharishi).
