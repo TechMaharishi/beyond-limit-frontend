@@ -88,7 +88,7 @@ pnpm preview
 - Use Conventional Commits (e.g., `feat:`, `fix:`, `chore:`) for clarity.
 
 ## License
-- Private, internal to BLPT
+- Private, internal to BLPT.
 
 ## Maintainer
 - Built by Vishal Kumar
