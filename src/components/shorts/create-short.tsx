@@ -439,6 +439,10 @@ export default function CreateShort() {
         }
 
         try {
+            // Stop any active upload polling before removing — prevents a stale poll from
+            // refetching after the new upload starts and overwriting new video state.
+            setIsPolling(false);
+
             await toast.promise(
                 deleteShortVideoMutation.mutateAsync(currentShortId),
                 {
@@ -651,8 +655,13 @@ export default function CreateShort() {
                 });
             }
 
-            await publishShortMutation.mutateAsync(shellId);
-            toast.success('Short video published!');
+            // If already published, metadata was updated above — no need to re-publish.
+            // POST /v1/.../publish rejects with 400 when status is already 'published'.
+            if (existingShort?.status !== 'published') {
+                await publishShortMutation.mutateAsync(shellId);
+            }
+            setHasUnsavedChanges(false);
+            toast.success(existingShort?.status === 'published' ? 'Published short updated!' : 'Short video published!');
             navigate(rolePath ? `/${rolePath}/content/shorts` : '/content/shorts');
         } catch (error) {
             console.error('Publish error:', error);
@@ -720,7 +729,7 @@ export default function CreateShort() {
                     {hasUnsavedChanges && autoSaveStatus === 'idle' && (
                         <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 animate-in fade-in">
                             <AlertCircle className="h-3.5 w-3.5" />
-                            Unsaved changes — click "Save as Draft" to save
+                            Unsaved changes
                         </span>
                     )}
                 </div>
@@ -1246,7 +1255,11 @@ export default function CreateShort() {
                     <Card>
                         <CardHeader>
                             <CardTitle>Actions</CardTitle>
-                            <CardDescription>Save or publish your video</CardDescription>
+                            <CardDescription>
+                                {existingShort?.status === 'published'
+                                    ? 'Save changes or move back to draft'
+                                    : 'Save or publish your video'}
+                            </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-3">
                             {/* All roles can save as draft */}
@@ -1280,7 +1293,7 @@ export default function CreateShort() {
                                 </Button>
                             )}
 
-                            {/* Admin only: Publish directly */}
+                            {/* Admin only: Publish / update published */}
                             {isAdmin && (
                                 <Button
                                     className="w-full"
@@ -1292,7 +1305,7 @@ export default function CreateShort() {
                                     ) : (
                                         <CheckCircle className="mr-2 h-4 w-4" />
                                     )}
-                                    Publish
+                                    {existingShort?.status === 'published' ? 'Update Published' : 'Publish'}
                                 </Button>
                             )}
 
