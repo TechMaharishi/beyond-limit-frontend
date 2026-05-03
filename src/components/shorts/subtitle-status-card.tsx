@@ -75,6 +75,7 @@ export function SubtitleStatusCard({
     failureReason,
     retryCount,
     lastAttempt,
+    retryable,
     hasSubtitleUrl,
     isRetrying,
     onRetry,
@@ -82,7 +83,7 @@ export function SubtitleStatusCard({
 }: SubtitleStatusCardProps) {
     const cfg = status ? STATUS_CONFIG[status] : null;
     const isProcessing = status === 'processing';
-    const canRetry = !isProcessing;
+    const canRetry = !isProcessing && retryable !== false;
 
     if (variant === 'slim') {
         return (

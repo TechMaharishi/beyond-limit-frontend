@@ -471,8 +471,9 @@ export async function addShortResource(
         form.append('names', JSON.stringify([payload.name]));
         response = await apiClient.post<ApiResponse<ShortVideo>>(
             `/short-videos/${shortId}/resources`,
-            form
-            // axios sets Content-Type to multipart/form-data with boundary automatically
+            form,
+            // Unset the default application/json so the browser sets multipart/form-data with boundary
+            { headers: { 'Content-Type': undefined } }
         );
     } else {
         response = await apiClient.post<ApiResponse<ShortVideo>>(

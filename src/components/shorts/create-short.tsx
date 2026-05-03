@@ -514,6 +514,13 @@ export default function CreateShort() {
                         visibility: formData.visibility,
                     },
                 });
+                // If the video is currently published, move it back to draft
+                if (existingShort?.status === 'published') {
+                    await changeStatusMutation.mutateAsync({
+                        shortId: currentShortId,
+                        payload: { status: 'draft' },
+                    });
+                }
                 toast.success('Short video saved as draft!');
             } else {
                 // Create a new shell (Phase 1 of V1 flow)
@@ -1015,8 +1022,8 @@ export default function CreateShort() {
                         </CardContent>
                     </Card>
 
-                    {/* Subtitle Status Card — edit mode only */}
-                    {isEditMode && currentShortId && (
+                    {/* Subtitle Status Card — only after a video has been uploaded */}
+                    {currentShortId && !!existingShort?.cloudinaryId && (
                         <SubtitleStatusCard
                             shortId={currentShortId}
                             status={subtitleStatus}
