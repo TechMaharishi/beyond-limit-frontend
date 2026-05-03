@@ -789,10 +789,14 @@ export default function AllUsersPage() {
                           <div className="flex items-center gap-1.5">
                             <span className="font-medium truncate" title={user.name}>{user.name}</span>
                             {user.newsletter === true && (
-                              <Mail className="h-3 w-3 shrink-0 text-sky-500" title="Subscribed to newsletter" />
+                              <span title="Subscribed to newsletter">
+                                <Mail className="h-3 w-3 shrink-0 text-sky-500" />
+                              </span>
                             )}
                             {user.newsletter === false && (
-                              <MailX className="h-3 w-3 shrink-0 text-muted-foreground/50" title="Not subscribed to newsletter" />
+                              <span title="Not subscribed to newsletter">
+                                <MailX className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+                              </span>
                             )}
                           </div>
                           <span className="text-xs text-muted-foreground truncate" title={user.email}>{user.email}</span>
