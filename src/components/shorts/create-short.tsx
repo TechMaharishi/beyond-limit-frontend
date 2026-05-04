@@ -211,7 +211,10 @@ export default function CreateShort() {
     const savedBadgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const cancelAutoSave = useCallback(() => {
-        cancelAutoSave();
+        if (autoSaveTimer.current) {
+            clearTimeout(autoSaveTimer.current);
+            autoSaveTimer.current = null;
+        }
     }, []);
 
     const performAutoSave = useCallback(async (data: ShortFormData, shellId?: string) => {

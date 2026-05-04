@@ -3,6 +3,7 @@ import {
     fetchAssignableUsers,
     fetchPublishedCourses,
     fetchUserAssignedCourses,
+    fetchUserProfilesForCourse,
     assignCourse,
     assignCoursesBulk,
     unassignCourse,
@@ -11,12 +12,10 @@ import {
 } from "@/services/assign-course.service";
 
 /**
- * TanStack Query hooks for course assignment feature
+ * TanStack Query hooks for course assignment feature.
+ * Updated to support profileId for Individual Learner (user-role) targets.
  */
 
-/**
- * Fetches assignable users by role (trainee or user)
- */
 export function useAssignableUsers(
     role: "trainee" | "user",
     params: FetchUsersParams = {},
@@ -26,80 +25,73 @@ export function useAssignableUsers(
         queryKey: ["assignable-users", role, params],
         queryFn: () => fetchAssignableUsers(role, params),
         enabled,
-        staleTime: 2 * 60 * 1000, // 2 minutes
+        staleTime: 2 * 60 * 1000,
     });
 }
 
-/**
- * Fetches published courses for assignment
- */
 export function usePublishedCourses(params: FetchCoursesParams = {}) {
     return useQuery({
-        queryKey: ["published-courses", params],
+        queryKey: ["published-courses-assign", params],
         queryFn: () => fetchPublishedCourses(params),
-        staleTime: 5 * 60 * 1000, // 5 minutes - courses don't change often
+        staleTime: 5 * 60 * 1000,
     });
 }
 
 /**
- * Fetches courses assigned to a specific user
+ * Fetches profiles for an Individual Learner — required before assigning a course.
+ */
+export function useUserProfilesForCourseAssignment(userId: string | null) {
+    return useQuery({
+        queryKey: ["user-profiles-course", userId],
+        queryFn: () => fetchUserProfilesForCourse(userId!),
+        enabled: !!userId,
+        staleTime: 2 * 60 * 1000,
+    });
+}
+
+/**
+ * Fetches courses assigned to a specific user, optionally filtered by profileId.
  */
 export function useUserAssignedCourses(
     userId: string | null,
-    params: { page?: number; limit?: number } = {}
+    params: { page?: number; limit?: number; profileId?: string } = {}
 ) {
     return useQuery({
         queryKey: ["user-assigned-courses", userId, params],
         queryFn: () => fetchUserAssignedCourses(userId!, params),
         enabled: !!userId,
-        staleTime: 1 * 60 * 1000, // 1 minute
+        staleTime: 1 * 60 * 1000,
     });
 }
 
-/**
- * Mutation for assigning a course to a user
- */
 export function useAssignCourse() {
     const queryClient = useQueryClient();
-
     return useMutation({
-        mutationFn: ({ userId, courseId }: { userId: string; courseId: string }) =>
-            assignCourse(userId, courseId),
+        mutationFn: ({ userId, courseId, profileId }: { userId: string; courseId: string; profileId?: string }) =>
+            assignCourse(userId, courseId, profileId),
         onSuccess: () => {
-            // Invalidate user lists and assigned courses
-            queryClient.invalidateQueries({ queryKey: ["assignable-users"] });
             queryClient.invalidateQueries({ queryKey: ["user-assigned-courses"] });
         },
     });
 }
 
-/**
- * Mutation for bulk assigning courses to users
- */
 export function useAssignCoursesBulk() {
     const queryClient = useQueryClient();
-
     return useMutation({
-        mutationFn: (items: Array<{ userId: string; courseId: string }>) =>
+        mutationFn: (items: Array<{ userId: string; courseId: string; profileId?: string }>) =>
             assignCoursesBulk(items),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["assignable-users"] });
             queryClient.invalidateQueries({ queryKey: ["user-assigned-courses"] });
         },
     });
 }
 
-/**
- * Mutation for unassigning a course from a user
- */
 export function useUnassignCourse() {
     const queryClient = useQueryClient();
-
     return useMutation({
-        mutationFn: ({ userId, courseId }: { userId: string; courseId: string }) =>
-            unassignCourse(userId, courseId),
+        mutationFn: ({ userId, courseId, profileId }: { userId: string; courseId: string; profileId?: string }) =>
+            unassignCourse(userId, courseId, profileId),
         onSuccess: () => {
-            // Invalidate assigned courses queries
             queryClient.invalidateQueries({ queryKey: ["user-assigned-courses"] });
         },
     });

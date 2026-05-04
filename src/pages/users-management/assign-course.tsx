@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
     ArrowUpDown,
     BookOpen,
@@ -64,10 +64,10 @@ import {
     useAssignCourse,
     useAssignCoursesBulk,
     useUnassignCourse,
+    useUserProfilesForCourseAssignment,
 } from "@/hooks/use-assign-course";
-import type { AssignableUser } from "@/services/assign-course.service";
+import type { AssignableUser, UserProfile } from "@/services/assign-course.service";
 
-// Role display mapping
 const ROLE_LABELS: Record<string, string> = {
     admin: "Super Admin",
     trainer: "Training Admin",
@@ -75,9 +75,6 @@ const ROLE_LABELS: Record<string, string> = {
     user: "Individual Learner",
 };
 
-/**
- * Get roles that the current user can assign courses to
- */
 function getAssignableRoles(currentUserRole: string): ("trainee" | "user")[] {
     switch (currentUserRole) {
         case "admin":
@@ -90,35 +87,80 @@ function getAssignableRoles(currentUserRole: string): ("trainee" | "user")[] {
     }
 }
 
-/**
- * Course Assignment Page
- * Allows admins/trainers/trainees to assign courses to users based on permissions
- */
+// ─── ProfilePicker ────────────────────────────────────────────────────────────
+
+interface ProfilePickerProps {
+    profiles: UserProfile[];
+    isLoading: boolean;
+    selectedProfileId: string | null;
+    onSelect: (id: string) => void;
+}
+
+function ProfilePicker({ profiles, isLoading, selectedProfileId, onSelect }: ProfilePickerProps) {
+    if (isLoading) {
+        return (
+            <div className="flex gap-2">
+                {Array.from({ length: 3 }).map((_, i) => (
+                    <Skeleton key={i} className="h-8 w-24 rounded-full" />
+                ))}
+            </div>
+        );
+    }
+    if (profiles.length === 0) {
+        return <p className="text-sm text-muted-foreground">No profiles found for this user.</p>;
+    }
+    return (
+        <div className="flex flex-wrap gap-2">
+            {profiles.map((p) => (
+                <button
+                    key={p._id}
+                    type="button"
+                    onClick={() => onSelect(p._id)}
+                    className={`px-3 py-1 rounded-full text-sm border transition-colors ${
+                        selectedProfileId === p._id
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-background hover:bg-muted border-border"
+                    }`}
+                >
+                    {p.name}
+                    {p.isDefault && (
+                        <span className="ml-1 text-xs opacity-70">(default)</span>
+                    )}
+                </button>
+            ))}
+        </div>
+    );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function AssignCoursePage() {
     const { data: session } = authClient.useSession();
     const currentUserRole = session?.user?.role || "user";
+    const currentUserId = session?.user?.id || "";
     const assignableRoles = getAssignableRoles(currentUserRole);
 
-    // Tab state for role filtering
     const [activeTab, setActiveTab] = useState<"trainee" | "user">(
         assignableRoles[0] || "user"
     );
 
-    // Table state
     const [search, setSearch] = useState("");
     const [page, setPage] = useState(1);
     const [limit, setLimit] = useState(10);
     const [sortBy, setSortBy] = useState("name");
     const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
-    // Dialog states
     const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
     const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
     const [selectedUser, setSelectedUser] = useState<AssignableUser | null>(null);
     const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([]);
     const [courseSearch, setCourseSearch] = useState("");
+    const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
 
-    // Queries
+    const isUserTab = activeTab === "user";
+    const requiresProfile = isUserTab;
+    const profileReady = !requiresProfile || !!selectedProfileId;
+
     const { data: usersData, isLoading: isUsersLoading } = useAssignableUsers(
         activeTab,
         { page, limit, search, sortBy, sortDirection }
@@ -133,19 +175,27 @@ export default function AssignCoursePage() {
         order: "desc",
     });
 
+    const selectedUserId = selectedUser?.id || null;
+    const isSelectedUserRole = selectedUser?.role === "user";
+
+    const { data: userProfiles = [], isLoading: isProfilesLoading } =
+        useUserProfilesForCourseAssignment(isSelectedUserRole ? selectedUserId : null);
+
     const [assignedPage, setAssignedPage] = useState(1);
     const [assignedLimit, setAssignedLimit] = useState(10);
     const { data: assignedCoursesData, isLoading: isAssignedLoading } = useUserAssignedCourses(
-        selectedUser?.id || null,
-        { page: assignedPage, limit: assignedLimit }
+        selectedUserId,
+        {
+            page: assignedPage,
+            limit: assignedLimit,
+            ...(isSelectedUserRole && selectedProfileId ? { profileId: selectedProfileId } : {}),
+        }
     );
 
-    // Mutations
     const assignMutation = useAssignCourse();
     const assignBulkMutation = useAssignCoursesBulk();
     const unassignMutation = useUnassignCourse();
 
-    // Derived data
     const users = useMemo(() => usersData?.users || [], [usersData]);
     const meta = usersData?.meta;
     const courses = useMemo(() => coursesData?.courses || [], [coursesData]);
@@ -153,23 +203,26 @@ export default function AssignCoursePage() {
     const assignedCourses = useMemo(() => assignedCoursesData?.courses || [], [assignedCoursesData]);
     const assignedMeta = assignedCoursesData?.meta;
 
-    // Filter courses by search and exclude already assigned
     const assignedCourseIds = useMemo(
         () => new Set(assignedCourses.map((ac) => ac.course._id)),
         [assignedCourses]
     );
 
-    const filteredCourses = useMemo(() => {
-        return courses.filter((course) => {
-            const matchesSearch = course.title
-                .toLowerCase()
-                .includes(courseSearch.toLowerCase());
-            const notAssigned = !assignedCourseIds.has(course._id);
-            return matchesSearch && notAssigned;
-        });
-    }, [courses, courseSearch, assignedCourseIds]);
+    const filteredCourses = useMemo(
+        () => courses.filter((course) =>
+            course.title.toLowerCase().includes(courseSearch.toLowerCase())
+        ),
+        [courses, courseSearch]
+    );
 
-    // Handlers
+    // Auto-select default profile
+    useEffect(() => {
+        if (userProfiles.length > 0 && !selectedProfileId) {
+            const def = userProfiles.find((p) => p.isDefault) ?? userProfiles[0];
+            setSelectedProfileId(def._id);
+        }
+    }, [userProfiles]);
+
     const handleSort = (field: string) => {
         if (sortBy === field) {
             setSortDirection(sortDirection === "asc" ? "desc" : "asc");
@@ -189,15 +242,18 @@ export default function AssignCoursePage() {
         setSelectedUser(user);
         setSelectedCourseIds([]);
         setCourseSearch("");
+        setSelectedProfileId(null);
         setIsAssignDialogOpen(true);
     };
 
     const openViewDialog = (user: AssignableUser) => {
         setSelectedUser(user);
+        setSelectedProfileId(null);
         setIsViewDialogOpen(true);
     };
 
     const handleCourseToggle = (courseId: string) => {
+        if (assignedCourseIds.has(courseId)) return;
         setSelectedCourseIds((prev) =>
             prev.includes(courseId)
                 ? prev.filter((id) => id !== courseId)
@@ -213,11 +269,10 @@ export default function AssignCoursePage() {
                 selectedCourseIds.map((courseId) => ({
                     userId: selectedUser.id,
                     courseId,
+                    ...(selectedProfileId ? { profileId: selectedProfileId } : {}),
                 }))
             );
-            toast.success(
-                `${selectedCourseIds.length} course(s) assigned successfully`
-            );
+            toast.success(`${selectedCourseIds.length} course(s) assigned successfully`);
             setIsAssignDialogOpen(false);
             setSelectedUser(null);
             setSelectedCourseIds([]);
@@ -237,7 +292,11 @@ export default function AssignCoursePage() {
         if (!selectedUser) return;
 
         try {
-            await unassignMutation.mutateAsync({ userId: selectedUser.id, courseId });
+            await unassignMutation.mutateAsync({
+                userId: selectedUser.id,
+                courseId,
+                ...(selectedProfileId ? { profileId: selectedProfileId } : {}),
+            });
             toast.success("Course unassigned successfully");
         } catch (error: unknown) {
             const message =
@@ -251,7 +310,6 @@ export default function AssignCoursePage() {
         }
     };
 
-    // Don't render if user has no permission
     if (assignableRoles.length === 0) {
         return (
             <div className="flex h-full items-center justify-center">
@@ -276,7 +334,6 @@ export default function AssignCoursePage() {
                 </p>
             </div>
 
-            {/* Role Tabs - only show if multiple roles available */}
             {assignableRoles.length > 1 && (
                 <Tabs value={activeTab} onValueChange={handleTabChange}>
                     <TabsList>
@@ -292,7 +349,6 @@ export default function AssignCoursePage() {
                 </Tabs>
             )}
 
-            {/* Search */}
             <div className="flex items-center justify-between">
                 <div className="relative w-72">
                     <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -323,15 +379,9 @@ export default function AssignCoursePage() {
                                         {sortBy === "name" && <ArrowUpDown className="h-3 w-3" />}
                                     </div>
                                 </TableHead>
-                                <TableHead className="w-[15%] bg-background py-2">
-                                    Account Type
-                                </TableHead>
-                                <TableHead className="w-[10%] bg-background py-2">
-                                    Verified
-                                </TableHead>
-                                <TableHead className="w-[10%] bg-background py-2">
-                                    Status
-                                </TableHead>
+                                <TableHead className="w-[15%] bg-background py-2">Account Type</TableHead>
+                                <TableHead className="w-[10%] bg-background py-2">Verified</TableHead>
+                                <TableHead className="w-[10%] bg-background py-2">Status</TableHead>
                                 <TableHead
                                     className="w-[20%] bg-background py-2 cursor-pointer hover:bg-muted/50 transition-colors"
                                     onClick={() => handleSort("createdAt")}
@@ -368,19 +418,13 @@ export default function AssignCoursePage() {
                                 </TableRow>
                             ) : (
                                 users.map((user) => (
-                                    <TableRow
-                                        key={user.id}
-                                        className="cursor-pointer hover:bg-muted/50"
-                                    >
+                                    <TableRow key={user.id} className="cursor-pointer hover:bg-muted/50">
                                         <TableCell className="w-[25%] py-2">
                                             <div className="flex flex-col truncate">
                                                 <span className="font-medium truncate" title={user.name}>
                                                     {user.name}
                                                 </span>
-                                                <span
-                                                    className="text-xs text-muted-foreground truncate"
-                                                    title={user.email}
-                                                >
+                                                <span className="text-xs text-muted-foreground truncate" title={user.email}>
                                                     {user.email}
                                                 </span>
                                             </div>
@@ -390,17 +434,11 @@ export default function AssignCoursePage() {
                                         </TableCell>
                                         <TableCell className="w-[10%] py-2">
                                             {user.emailVerified ? (
-                                                <Badge
-                                                    variant="outline"
-                                                    className="bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
-                                                >
+                                                <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-50">
                                                     Verified
                                                 </Badge>
                                             ) : (
-                                                <Badge
-                                                    variant="outline"
-                                                    className="bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-50"
-                                                >
+                                                <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-50">
                                                     Pending
                                                 </Badge>
                                             )}
@@ -429,9 +467,7 @@ export default function AssignCoursePage() {
                                                 </DropdownMenuTrigger>
                                                 <DropdownMenuContent align="end">
                                                     <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                                    <DropdownMenuItem
-                                                        onClick={() => openAssignDialog(user)}
-                                                    >
+                                                    <DropdownMenuItem onClick={() => openAssignDialog(user)}>
                                                         <BookOpen className="mr-2 h-4 w-4" />
                                                         Assign Course
                                                     </DropdownMenuItem>
@@ -511,7 +547,7 @@ export default function AssignCoursePage() {
 
             {/* Assign Course Dialog */}
             <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
-                    <DialogContent className="sm:max-w-[900px] h-[85vh] flex flex-col">
+                <DialogContent className="sm:max-w-[900px] h-[85vh] flex flex-col">
                     <DialogHeader>
                         <DialogTitle>Assign Courses</DialogTitle>
                         <DialogDescription>
@@ -521,6 +557,19 @@ export default function AssignCoursePage() {
 
                     {selectedUser && (
                         <div className="flex-1 flex flex-col gap-4 overflow-hidden p-1">
+                            {/* Profile Picker — Individual Learners only */}
+                            {isSelectedUserRole && (
+                                <div className="space-y-1">
+                                    <Label>Profile</Label>
+                                    <ProfilePicker
+                                        profiles={userProfiles}
+                                        isLoading={isProfilesLoading}
+                                        selectedProfileId={selectedProfileId}
+                                        onSelect={setSelectedProfileId}
+                                    />
+                                </div>
+                            )}
+
                             {/* Course Search */}
                             <div className="space-y-2">
                                 <Label>Search Courses</Label>
@@ -538,7 +587,8 @@ export default function AssignCoursePage() {
                             {/* Course List */}
                             <div className="flex-1 flex flex-col min-h-0 gap-2">
                                 <Label>
-                                    Available Courses ({filteredCourses.length})
+                                    Available Courses ({filteredCourses.length}
+                                    {assignedCourseIds.size > 0 && ` · ${assignedCourseIds.size} assigned`})
                                     {selectedCourseIds.length > 0 && (
                                         <span className="ml-2 text-primary">
                                             • {selectedCourseIds.length} selected
@@ -546,74 +596,84 @@ export default function AssignCoursePage() {
                                     )}
                                 </Label>
                                 <div className="flex-1 min-h-0 border rounded-md overflow-hidden relative">
-                                <div className="absolute inset-0 overflow-y-auto">
-                                    {isCoursesLoading || isAssignedLoading ? (
-                                        <div className="p-4 space-y-2">
-                                            {Array.from({ length: 8 }).map((_, i) => (
-                                                <Skeleton key={i} className="h-12 w-full" />
-                                            ))}
-                                        </div>
-                                    ) : filteredCourses.length === 0 ? (
-                                        <div className="flex h-[200px] items-center justify-center text-muted-foreground">
-                                            <div className="text-center">
-                                                <BookOpen className="mx-auto h-8 w-8 opacity-20" />
-                                                <p className="mt-2">
-                                                    {courseSearch
-                                                        ? "No courses found matching search"
-                                                        : "No available courses to assign"}
-                                                </p>
+                                    <div className="absolute inset-0 overflow-y-auto">
+                                        {isCoursesLoading || isAssignedLoading ? (
+                                            <div className="p-4 space-y-2">
+                                                {Array.from({ length: 8 }).map((_, i) => (
+                                                    <Skeleton key={i} className="h-12 w-full" />
+                                                ))}
                                             </div>
-                                        </div>
-                                    ) : (
-                                        <div className="p-2 space-y-2">
-                                            {filteredCourses.map((course) => (
-                                                <div
-                                                    key={course._id}
-                                                    className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedCourseIds.includes(course._id)
-                                                        ? "bg-primary/5 border-primary"
-                                                        : "hover:bg-muted/50"
-                                                        }`}
-                                                    onClick={() => handleCourseToggle(course._id)}
-                                                >
-                                                    <Checkbox
-                                                        checked={selectedCourseIds.includes(course._id)}
-                                                        className="mt-1"
-                                                    />
-                                                    <div className="flex-1 min-w-0">
-                                                        <h4 className="font-medium truncate" title={course.title}>
-                                                            {course.title.length > 20 ? course.title.slice(0, 20) + "..." : course.title}
-                                                        </h4>
-                                                        <p className="text-sm text-muted-foreground line-clamp-2">
-                                                            {course.description.length > 50 ? course.description.slice(0, 50) + "..." : course.description}
-                                                        </p>
-                                                        <div className="mt-1 flex items-center gap-1 flex-wrap">
-                                                            <Badge variant="outline" className="text-xs capitalize">
-                                                                {course.accessLevel}
-                                                            </Badge>
-                                                            {course.tags.slice(0, 3).map((tag) => (
-                                                                <Badge
-                                                                    key={tag}
-                                                                    variant="outline"
-                                                                    className="text-xs"
-                                                                >
-                                                                    {tag}
-                                                                </Badge>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                    {course.thumbnailUrl && (
-                                                        <img
-                                                            src={course.thumbnailUrl}
-                                                            alt=""
-                                                            className="w-28 h-20 object-cover rounded"
-                                                        />
-                                                    )}
+                                        ) : filteredCourses.length === 0 ? (
+                                            <div className="flex h-[200px] items-center justify-center text-muted-foreground">
+                                                <div className="text-center">
+                                                    <BookOpen className="mx-auto h-8 w-8 opacity-20" />
+                                                    <p className="mt-2">
+                                                        {courseSearch
+                                                            ? "No courses found matching search"
+                                                            : "No available courses to assign"}
+                                                    </p>
                                                 </div>
-                                            ))}
-                                        </div>
-                                    )}
+                                            </div>
+                                        ) : (
+                                            <div className="p-2 space-y-2">
+                                                {filteredCourses.map((course) => {
+                                                    const alreadyAssigned = assignedCourseIds.has(course._id);
+                                                    return (
+                                                        <div
+                                                            key={course._id}
+                                                            className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                                                                alreadyAssigned
+                                                                    ? "opacity-60 cursor-not-allowed bg-muted/30"
+                                                                    : selectedCourseIds.includes(course._id)
+                                                                    ? "bg-primary/5 border-primary cursor-pointer"
+                                                                    : "hover:bg-muted/50 cursor-pointer"
+                                                            }`}
+                                                            onClick={() => handleCourseToggle(course._id)}
+                                                        >
+                                                            <Checkbox
+                                                                checked={selectedCourseIds.includes(course._id)}
+                                                                disabled={alreadyAssigned}
+                                                                className="mt-1"
+                                                            />
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="flex items-center gap-2">
+                                                                    <h4 className="font-medium truncate" title={course.title}>
+                                                                        {course.title.length > 20 ? course.title.slice(0, 20) + "..." : course.title}
+                                                                    </h4>
+                                                                    {alreadyAssigned && (
+                                                                        <Badge className="text-xs shrink-0 bg-emerald-100 text-emerald-800 border-transparent shadow-none hover:bg-emerald-100">
+                                                                            Assigned
+                                                                        </Badge>
+                                                                    )}
+                                                                </div>
+                                                                <p className="text-sm text-muted-foreground line-clamp-2">
+                                                                    {course.description.length > 50 ? course.description.slice(0, 50) + "..." : course.description}
+                                                                </p>
+                                                                <div className="mt-1 flex items-center gap-1 flex-wrap">
+                                                                    <Badge variant="outline" className="text-xs capitalize">
+                                                                        {course.accessLevel}
+                                                                    </Badge>
+                                                                    {course.tags.slice(0, 3).map((tag) => (
+                                                                        <Badge key={tag} variant="outline" className="text-xs">
+                                                                            {tag}
+                                                                        </Badge>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                            {course.thumbnailUrl && (
+                                                                <img
+                                                                    src={course.thumbnailUrl}
+                                                                    alt=""
+                                                                    className="w-28 h-20 object-cover rounded"
+                                                                />
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
                                 <div className="flex items-center justify-between pt-2">
                                     <div className="text-sm text-muted-foreground">
                                         {isCoursesLoading ? (
@@ -675,15 +735,19 @@ export default function AssignCoursePage() {
                         <Button
                             variant="outline"
                             onClick={() => setIsAssignDialogOpen(false)}
-                            disabled={assignMutation.isPending}
+                            disabled={assignBulkMutation.isPending}
                         >
                             Cancel
                         </Button>
                         <Button
                             onClick={handleAssignSubmit}
-                            disabled={selectedCourseIds.length === 0 || assignMutation.isPending}
+                            disabled={
+                                selectedCourseIds.length === 0 ||
+                                assignBulkMutation.isPending ||
+                                !profileReady
+                            }
                         >
-                            {assignMutation.isPending && (
+                            {assignBulkMutation.isPending && (
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             )}
                             Assign {selectedCourseIds.length > 0 && `(${selectedCourseIds.length})`}
@@ -704,79 +768,92 @@ export default function AssignCoursePage() {
 
                     {selectedUser && (
                         <div className="flex-1 flex flex-col gap-4 overflow-hidden p-1">
+                            {/* Profile Picker — Individual Learners only */}
+                            {isSelectedUserRole && (
+                                <div className="space-y-1">
+                                    <Label>Profile</Label>
+                                    <ProfilePicker
+                                        profiles={userProfiles}
+                                        isLoading={isProfilesLoading}
+                                        selectedProfileId={selectedProfileId}
+                                        onSelect={setSelectedProfileId}
+                                    />
+                                </div>
+                            )}
+
                             {/* Assigned Courses List */}
                             <div className="flex-1 min-h-0 border rounded-md overflow-hidden relative">
                                 <div className="absolute inset-0 overflow-y-auto">
-                                {isAssignedLoading ? (
-                                    <div className="space-y-2">
-                                        {Array.from({ length: 8 }).map((_, i) => (
-                                            <Skeleton key={i} className="h-12 w-full" />
-                                        ))}
-                                    </div>
-                                ) : assignedCourses.length === 0 ? (
-                                    <div className="flex h-[200px] items-center justify-center text-muted-foreground">
-                                        <div className="text-center">
-                                            <BookOpen className="mx-auto h-8 w-8 opacity-20" />
-                                            <p className="mt-2">No courses assigned yet</p>
+                                    {isAssignedLoading ? (
+                                        <div className="space-y-2 p-4">
+                                            {Array.from({ length: 8 }).map((_, i) => (
+                                                <Skeleton key={i} className="h-12 w-full" />
+                                            ))}
                                         </div>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-3">
-                                        {assignedCourses.map((assignment) => (
-                                            <div
-                                                key={assignment.course._id}
-                                                className="flex items-start gap-3 p-3 rounded-lg border"
-                                            >
-                                                {assignment.course.thumbnailUrl && (
-                                                    <img
-                                                        src={assignment.course.thumbnailUrl}
-                                                        alt=""
-                                                        className="w-28 h-20 object-cover rounded"
-                                                    />
-                                                )}
-                                                <div className="flex-1 min-w-0">
-                                                    <h4 className="font-medium truncate">
-                                                        {assignment.course.title}
-                                                    </h4>
-                                                    <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
-                                                        <span>
-                                                            Assigned by {assignment.assignedBy.name}
-                                                        </span>
-                                                        <span>•</span>
-                                                        <span>
-                                                            {formatRelativeTime(assignment.assignedAt)}
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex items-center gap-2 mt-2">
-                                                        <Progress
-                                                            value={assignment.progressSummary.percentCompleted}
-                                                            className="h-2 flex-1"
-                                                        />
-                                                        <span className="text-xs text-muted-foreground w-10">
-                                                            {assignment.progressSummary.percentCompleted}%
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                                    onClick={() => handleUnassign(assignment.course._id)}
-                                                    disabled={unassignMutation.isPending}
-                                                >
-                                                    {unassignMutation.isPending ? (
-                                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                                    ) : (
-                                                        <Trash2 className="h-4 w-4" />
-                                                    )}
-                                                </Button>
+                                    ) : assignedCourses.length === 0 ? (
+                                        <div className="flex h-[200px] items-center justify-center text-muted-foreground">
+                                            <div className="text-center">
+                                                <BookOpen className="mx-auto h-8 w-8 opacity-20" />
+                                                <p className="mt-2">No courses assigned yet</p>
                                             </div>
-                                        ))}
-                                    </div>
-                                )}
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3 p-3">
+                                            {assignedCourses.map((assignment) => (
+                                                <div
+                                                    key={assignment.course._id}
+                                                    className="flex items-start gap-3 p-3 rounded-lg border"
+                                                >
+                                                    {assignment.course.thumbnailUrl && (
+                                                        <img
+                                                            src={assignment.course.thumbnailUrl}
+                                                            alt=""
+                                                            className="w-28 h-20 object-cover rounded"
+                                                        />
+                                                    )}
+                                                    <div className="flex-1 min-w-0">
+                                                        <h4 className="font-medium truncate">
+                                                            {assignment.course.title}
+                                                        </h4>
+                                                        <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
+                                                            <span>Assigned by {assignment.assignedBy.name}</span>
+                                                            <span>•</span>
+                                                            <span>{formatRelativeTime(assignment.assignedAt)}</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2 mt-2">
+                                                            <Progress
+                                                                value={assignment.progressSummary.percentCompleted}
+                                                                className="h-2 flex-1"
+                                                            />
+                                                            <span className="text-xs text-muted-foreground w-10">
+                                                                {assignment.progressSummary.percentCompleted}%
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    {(currentUserRole === "admin" ||
+                                                        assignment.assignedBy.id === currentUserId) && (
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                            onClick={() => handleUnassign(assignment.course._id)}
+                                                            disabled={unassignMutation.isPending}
+                                                        >
+                                                            {unassignMutation.isPending ? (
+                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                            ) : (
+                                                                <Trash2 className="h-4 w-4" />
+                                                            )}
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
-                                <div className="flex items-center justify-between pt-2">
+
+                            <div className="flex items-center justify-between pt-2">
                                 <div className="text-sm text-muted-foreground">
                                     {isAssignedLoading ? (
                                         "Loading..."
@@ -830,7 +907,6 @@ export default function AssignCoursePage() {
                                 </div>
                             </div>
 
-                            {/* Quick Assign Button */}
                             <Button
                                 className="w-full"
                                 variant="outline"
