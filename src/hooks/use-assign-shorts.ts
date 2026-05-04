@@ -6,6 +6,7 @@ import {
     fetchAssignableUsersForShorts,
     fetchPublishedShortVideos,
     fetchUserAssignedShorts,
+    fetchUserProfiles,
     unassignShort,
     type FetchShortsParams,
 } from "@/services/assign-shorts.service";
@@ -32,9 +33,18 @@ export function usePublishedShortVideos(params: FetchShortsParams = {}) {
     });
 }
 
+export function useUserProfilesForAssignment(userId: string | null) {
+    return useQuery({
+        queryKey: ["user-profiles-assignment", userId],
+        queryFn: () => fetchUserProfiles(userId!),
+        enabled: !!userId,
+        staleTime: 2 * 60 * 1000,
+    });
+}
+
 export function useUserAssignedShorts(
     userId: string | null,
-    params: { page?: number; limit?: number } = {}
+    params: { page?: number; limit?: number; profileId?: string } = {}
 ) {
     return useQuery({
         queryKey: ["user-assigned-shorts", userId, params],
@@ -48,8 +58,8 @@ export function useAssignShort() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ userId, shortVideoId }: { userId: string; shortVideoId: string }) =>
-            assignShort(userId, shortVideoId),
+        mutationFn: ({ userId, shortVideoId, profileId }: { userId: string; shortVideoId: string; profileId?: string }) =>
+            assignShort(userId, shortVideoId, profileId),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["user-assigned-shorts"] });
         },
@@ -60,7 +70,7 @@ export function useAssignShortsBulk() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (items: Array<{ userId: string; shortVideoId: string }>) =>
+        mutationFn: (items: Array<{ userId: string; shortVideoId: string; profileId?: string }>) =>
             assignShortsBulk(items),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["user-assigned-shorts"] });
@@ -72,8 +82,8 @@ export function useUnassignShort() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ userId, shortVideoId }: { userId: string; shortVideoId: string }) =>
-            unassignShort(userId, shortVideoId),
+        mutationFn: ({ userId, shortVideoId, profileId }: { userId: string; shortVideoId: string; profileId?: string }) =>
+            unassignShort(userId, shortVideoId, profileId),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["user-assigned-shorts"] });
         },

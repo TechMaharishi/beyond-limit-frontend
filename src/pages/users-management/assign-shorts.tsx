@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
     ArrowUpDown,
     ChevronLeft,
     ChevronRight,
+    Layers,
     Loader2,
     MoreHorizontal,
     Search,
@@ -50,6 +51,7 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import {
     useAssignableUsersForShorts,
@@ -57,9 +59,10 @@ import {
     usePublishedShortVideos,
     useUnassignShort,
     useUserAssignedShorts,
+    useUserProfilesForAssignment,
 } from "@/hooks/use-assign-shorts";
 import type { AssignableUser } from "@/services/assign-course.service";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { UserProfile } from "@/services/assign-shorts.service";
 
 function getAssignableRoles(currentUserRole: string): ("trainee" | "user")[] {
     switch (currentUserRole) {
@@ -73,6 +76,59 @@ function getAssignableRoles(currentUserRole: string): ("trainee" | "user")[] {
     }
 }
 
+// ─── Profile Picker ───────────────────────────────────────────────────────────
+
+interface ProfilePickerProps {
+    profiles: UserProfile[];
+    isLoading: boolean;
+    selectedProfileId: string | null;
+    onSelect: (id: string) => void;
+}
+
+function ProfilePicker({ profiles, isLoading, selectedProfileId, onSelect }: ProfilePickerProps) {
+    if (isLoading) {
+        return (
+            <div className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Loading profiles…</span>
+            </div>
+        );
+    }
+
+    if (profiles.length === 0) {
+        return (
+            <p className="text-sm text-muted-foreground italic">
+                This user has no profiles. Create one first in User Management.
+            </p>
+        );
+    }
+
+    return (
+        <div className="flex flex-wrap gap-2">
+            {profiles.map((p) => (
+                <button
+                    key={p._id}
+                    type="button"
+                    onClick={() => onSelect(p._id)}
+                    className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                        selectedProfileId === p._id
+                            ? "border-primary bg-primary/10 text-primary font-medium"
+                            : "border-border hover:bg-muted/50"
+                    }`}
+                >
+                    <Layers className="h-3.5 w-3.5" />
+                    {p.name}
+                    {p.isDefault && (
+                        <span className="text-xs text-muted-foreground">(default)</span>
+                    )}
+                </button>
+            ))}
+        </div>
+    );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function AssignShortsPage() {
     const { data: session } = authClient.useSession();
     const currentUserRole = session?.user?.role || "user";
@@ -80,6 +136,7 @@ export default function AssignShortsPage() {
     const [activeTab, setActiveTab] = useState<"trainee" | "user">(
         assignableRoles[0] || "user"
     );
+    const isUserTab = activeTab === "user";
 
     const [search, setSearch] = useState("");
     const [page, setPage] = useState(1);
@@ -90,8 +147,22 @@ export default function AssignShortsPage() {
     const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
     const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
     const [selectedUser, setSelectedUser] = useState<AssignableUser | null>(null);
+    const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
     const [selectedShortIds, setSelectedShortIds] = useState<string[]>([]);
     const [shortSearch, setShortSearch] = useState("");
+
+    // Profile data — only fetched for Individual Learner (user) rows
+    const { data: userProfiles = [], isLoading: isProfilesLoading } = useUserProfilesForAssignment(
+        isUserTab && selectedUser ? selectedUser.id : null
+    );
+
+    // Auto-select the default profile when profiles load
+    useEffect(() => {
+        if (userProfiles.length > 0 && !selectedProfileId) {
+            const def = userProfiles.find((p) => p.isDefault) ?? userProfiles[0];
+            setSelectedProfileId(def._id);
+        }
+    }, [userProfiles]);
 
     const { data: usersData, isLoading: isUsersLoading } = useAssignableUsersForShorts(
         activeTab,
@@ -112,7 +183,12 @@ export default function AssignShortsPage() {
     const [assignedLimit, setAssignedLimit] = useState(10);
     const { data: assignedShortsData, isLoading: isAssignedLoading } = useUserAssignedShorts(
         selectedUser?.id || null,
-        { page: assignedPage, limit: assignedLimit }
+        {
+            page: assignedPage,
+            limit: assignedLimit,
+            // Only pass profileId for user-role accounts
+            ...(isUserTab && selectedProfileId ? { profileId: selectedProfileId } : {}),
+        }
     );
 
     const bulkAssignMutation = useAssignShortsBulk();
@@ -130,15 +206,13 @@ export default function AssignShortsPage() {
         [assignedShorts]
     );
 
-    const filteredShorts = useMemo(() => {
-        return shorts.filter((short) => {
-            const matchesSearch = short.title
-                .toLowerCase()
-                .includes(shortSearch.toLowerCase());
-            const notAssigned = !assignedShortIds.has(short._id);
-            return matchesSearch && notAssigned;
-        });
-    }, [shorts, shortSearch, assignedShortIds]);
+    const filteredShorts = useMemo(
+        () =>
+            shorts.filter((short) =>
+                short.title.toLowerCase().includes(shortSearch.toLowerCase())
+            ),
+        [shorts, shortSearch]
+    );
 
     const handleSort = (field: string) => {
         if (sortBy === field) {
@@ -149,17 +223,22 @@ export default function AssignShortsPage() {
         }
     };
 
-    const openAssignDialog = (user: AssignableUser) => {
-        setSelectedUser(user);
+    const resetDialogState = () => {
         setSelectedShortIds([]);
         setShortSearch("");
         setAssignedPage(1);
+        setSelectedProfileId(null);
+    };
+
+    const openAssignDialog = (user: AssignableUser) => {
+        setSelectedUser(user);
+        resetDialogState();
         setIsAssignDialogOpen(true);
     };
 
     const openViewDialog = (user: AssignableUser) => {
         setSelectedUser(user);
-        setAssignedPage(1);
+        resetDialogState();
         setIsViewDialogOpen(true);
     };
 
@@ -169,31 +248,33 @@ export default function AssignShortsPage() {
         );
     };
 
+    // Validate that profile is selected when required
+    const requiresProfile = isUserTab;
+    const profileReady = !requiresProfile || !!selectedProfileId;
+
     const handleAssignSubmit = async () => {
         if (!selectedUser || selectedShortIds.length === 0) return;
+        if (requiresProfile && !selectedProfileId) {
+            toast.error("Please select a profile to assign shorts to.");
+            return;
+        }
 
         try {
             await bulkAssignMutation.mutateAsync(
                 selectedShortIds.map((shortVideoId) => ({
                     userId: selectedUser.id,
                     shortVideoId,
+                    ...(requiresProfile && selectedProfileId ? { profileId: selectedProfileId } : {}),
                 }))
             );
-
-            toast.success("Shorts Assigned");
-
+            toast.success("Shorts assigned successfully");
             setIsAssignDialogOpen(false);
+            resetDialogState();
             setSelectedUser(null);
-            setSelectedShortIds([]);
         } catch (error: unknown) {
-            const message =
-                typeof error === "object" &&
-                error !== null &&
-                "response" in error &&
-                (error as { response?: { data?: { message?: string } } }).response?.data?.message
-                    ? (error as { response?: { data?: { message?: string } } }).response!.data!.message!
-                    : "Failed to assign shorts";
-            toast.error(message);
+            const msg =
+                (error as any)?.response?.data?.message ?? "Failed to assign shorts";
+            toast.error(msg);
         }
     };
 
@@ -201,17 +282,16 @@ export default function AssignShortsPage() {
         if (!selectedUser) return;
 
         try {
-            await unassignMutation.mutateAsync({ userId: selectedUser.id, shortVideoId });
+            await unassignMutation.mutateAsync({
+                userId: selectedUser.id,
+                shortVideoId,
+                ...(requiresProfile && selectedProfileId ? { profileId: selectedProfileId } : {}),
+            });
             toast.success("Short unassigned successfully");
         } catch (error: unknown) {
-            const message =
-                typeof error === "object" &&
-                error !== null &&
-                "response" in error &&
-                (error as { response?: { data?: { message?: string } } }).response?.data?.message
-                    ? (error as { response?: { data?: { message?: string } } }).response!.data!.message!
-                    : "Failed to unassign short";
-            toast.error(message);
+            const msg =
+                (error as any)?.response?.data?.message ?? "Failed to unassign short";
+            toast.error(msg);
         }
     };
 
@@ -231,16 +311,21 @@ export default function AssignShortsPage() {
 
     return (
         <div className="space-y-6 p-8 h-full flex flex-col">
+            {/* Header */}
             <div>
                 <h1 className="text-3xl font-bold tracking-tight">Assign Shorts</h1>
                 <p className="text-muted-foreground mt-1">
                     Assign short videos to Clinical Learners and Individual Learners.
                 </p>
                 <div className="mt-3">
-                    <Tabs value={activeTab} onValueChange={(val) => {
-                        setActiveTab(val as "trainee" | "user");
-                        setPage(1);
-                    }}>
+                    <Tabs
+                        value={activeTab}
+                        onValueChange={(val) => {
+                            setActiveTab(val as "trainee" | "user");
+                            setPage(1);
+                            setSearch("");
+                        }}
+                    >
                         <TabsList>
                             {assignableRoles.includes("trainee") && (
                                 <TabsTrigger value="trainee">Clinical Learners</TabsTrigger>
@@ -253,11 +338,12 @@ export default function AssignShortsPage() {
                 </div>
             </div>
 
+            {/* Toolbar */}
             <div className="flex items-center justify-between">
                 <div className="relative w-72">
                     <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
-                        placeholder="Search Individual Learners..."
+                        placeholder={`Search ${isUserTab ? "Individual Learners" : "Clinical Learners"}…`}
                         value={search}
                         onChange={(e) => {
                             setSearch(e.target.value);
@@ -268,6 +354,7 @@ export default function AssignShortsPage() {
                 </div>
             </div>
 
+            {/* Users table */}
             <div className="rounded-md border bg-background overflow-hidden">
                 <div className="max-h-[440px] overflow-auto relative w-full">
                     <table className="w-full caption-bottom text-sm border-collapse table-fixed">
@@ -282,15 +369,9 @@ export default function AssignShortsPage() {
                                         {sortBy === "name" && <ArrowUpDown className="h-3 w-3" />}
                                     </div>
                                 </TableHead>
-                                <TableHead className="w-[15%] bg-background py-2">
-                                    Account Type
-                                </TableHead>
-                                <TableHead className="w-[10%] bg-background py-2">
-                                    Verified
-                                </TableHead>
-                                <TableHead className="w-[10%] bg-background py-2">
-                                    Status
-                                </TableHead>
+                                <TableHead className="w-[15%] bg-background py-2">Account Type</TableHead>
+                                <TableHead className="w-[10%] bg-background py-2">Verified</TableHead>
+                                <TableHead className="w-[10%] bg-background py-2">Status</TableHead>
                                 <TableHead
                                     className="w-[20%] bg-background py-2 cursor-pointer hover:bg-muted/50 transition-colors"
                                     onClick={() => handleSort("createdAt")}
@@ -300,7 +381,7 @@ export default function AssignShortsPage() {
                                         {sortBy === "createdAt" && <ArrowUpDown className="h-3 w-3" />}
                                     </div>
                                 </TableHead>
-                                <TableHead className="w-[20%] bg-background py-2 text-right"></TableHead>
+                                <TableHead className="w-[20%] bg-background py-2 text-right" />
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -327,44 +408,32 @@ export default function AssignShortsPage() {
                                 </TableRow>
                             ) : (
                                 users.map((user) => (
-                                    <TableRow
-                                        key={user.id}
-                                        className="cursor-pointer hover:bg-muted/50"
-                                    >
-                                        <TableCell className="w-[25%] py-2">
+                                    <TableRow key={user.id} className="hover:bg-muted/50">
+                                        <TableCell className="py-2">
                                             <div className="flex flex-col truncate">
                                                 <span className="font-medium truncate" title={user.name}>
                                                     {user.name}
                                                 </span>
-                                                <span
-                                                    className="text-xs text-muted-foreground truncate"
-                                                    title={user.email}
-                                                >
+                                                <span className="text-xs text-muted-foreground truncate" title={user.email}>
                                                     {user.email}
                                                 </span>
                                             </div>
                                         </TableCell>
-                                        <TableCell className="w-[15%] py-2 capitalize">
-                                            {user.accountType || "-"}
+                                        <TableCell className="py-2 capitalize">
+                                            {user.accountType || "—"}
                                         </TableCell>
-                                        <TableCell className="w-[10%] py-2">
+                                        <TableCell className="py-2">
                                             {user.emailVerified ? (
-                                                <Badge
-                                                    variant="outline"
-                                                    className="bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
-                                                >
+                                                <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-50">
                                                     Verified
                                                 </Badge>
                                             ) : (
-                                                <Badge
-                                                    variant="outline"
-                                                    className="bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-50"
-                                                >
+                                                <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-50">
                                                     Pending
                                                 </Badge>
                                             )}
                                         </TableCell>
-                                        <TableCell className="w-[10%] py-2">
+                                        <TableCell className="py-2">
                                             {user.banned ? (
                                                 <Badge className="bg-red-100 text-red-800 hover:bg-red-200 border-transparent shadow-none">
                                                     Banned
@@ -375,10 +444,10 @@ export default function AssignShortsPage() {
                                                 </Badge>
                                             )}
                                         </TableCell>
-                                        <TableCell className="w-[20%] py-2 text-muted-foreground text-sm">
+                                        <TableCell className="py-2 text-muted-foreground text-sm">
                                             {formatRelativeTime(user.createdAt)}
                                         </TableCell>
-                                        <TableCell className="w-[20%] py-2 text-right">
+                                        <TableCell className="py-2 text-right">
                                             <DropdownMenu>
                                                 <DropdownMenuTrigger asChild>
                                                     <Button variant="ghost" className="h-8 w-8 p-0">
@@ -407,10 +476,11 @@ export default function AssignShortsPage() {
                 </div>
             </div>
 
+            {/* Pagination */}
             <div className="flex items-center justify-between">
                 <div className="text-sm text-muted-foreground">
                     {isUsersLoading ? (
-                        "Loading..."
+                        "Loading…"
                     ) : meta && meta.total > 0 ? (
                         <>
                             Showing {Math.min((meta.page - 1) * meta.limit + 1, meta.total)} to{" "}
@@ -425,10 +495,7 @@ export default function AssignShortsPage() {
                         <span className="text-sm text-muted-foreground">Rows per page</span>
                         <Select
                             value={limit.toString()}
-                            onValueChange={(val) => {
-                                setLimit(Number(val));
-                                setPage(1);
-                            }}
+                            onValueChange={(val) => { setLimit(Number(val)); setPage(1); }}
                         >
                             <SelectTrigger className="h-8 w-[70px]">
                                 <SelectValue placeholder={limit} />
@@ -442,8 +509,7 @@ export default function AssignShortsPage() {
                         </Select>
                     </div>
                     <Button
-                        variant="outline"
-                        size="sm"
+                        variant="outline" size="sm"
                         onClick={() => setPage((p) => Math.max(1, p - 1))}
                         disabled={!meta?.hasPrev || isUsersLoading}
                     >
@@ -454,8 +520,7 @@ export default function AssignShortsPage() {
                         Page {meta?.page || 1} of {meta?.totalPages || 1}
                     </div>
                     <Button
-                        variant="outline"
-                        size="sm"
+                        variant="outline" size="sm"
                         onClick={() => setPage((p) => p + 1)}
                         disabled={!meta?.hasNext || isUsersLoading}
                     >
@@ -465,23 +530,45 @@ export default function AssignShortsPage() {
                 </div>
             </div>
 
-            <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+            {/* ── Assign Dialog ── */}
+            <Dialog open={isAssignDialogOpen} onOpenChange={(open) => { if (!open) { setIsAssignDialogOpen(false); resetDialogState(); } }}>
                 <DialogContent className="sm:max-w-[900px] h-[85vh] flex flex-col">
                     <DialogHeader>
                         <DialogTitle>Assign Shorts</DialogTitle>
                         <DialogDescription>
-                            Select short videos to assign to {selectedUser?.name}
+                            Select short videos to assign to{" "}
+                            <span className="font-medium text-foreground">{selectedUser?.name}</span>
                         </DialogDescription>
                     </DialogHeader>
 
                     {selectedUser && (
                         <div className="flex-1 flex flex-col gap-4 overflow-hidden p-1">
+                            {/* Profile picker — only for Individual Learners */}
+                            {isUserTab && (
+                                <div className="space-y-2">
+                                    <Label className="flex items-center gap-1.5">
+                                        <Layers className="h-4 w-4" />
+                                        Assign to Profile
+                                        <span className="text-destructive">*</span>
+                                    </Label>
+                                    <ProfilePicker
+                                        profiles={userProfiles}
+                                        isLoading={isProfilesLoading}
+                                        selectedProfileId={selectedProfileId}
+                                        onSelect={setSelectedProfileId}
+                                    />
+                                    {userProfiles.length > 0 && !selectedProfileId && (
+                                        <p className="text-xs text-destructive">Select a profile to continue.</p>
+                                    )}
+                                </div>
+                            )}
+
                             <div className="space-y-2">
                                 <Label>Search Shorts</Label>
                                 <div className="relative">
                                     <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                                     <Input
-                                        placeholder="Search available shorts..."
+                                        placeholder="Search available shorts…"
                                         value={shortSearch}
                                         onChange={(e) => setShortSearch(e.target.value)}
                                         className="pl-8"
@@ -491,18 +578,28 @@ export default function AssignShortsPage() {
 
                             <div className="flex-1 flex flex-col min-h-0 gap-2">
                                 <Label>
-                                    Available Shorts ({filteredShorts.length})
+                                    Shorts ({filteredShorts.length})
+                                    {isAssignedLoading && (
+                                        <span className="ml-2 text-muted-foreground font-normal text-xs">
+                                            checking assignments…
+                                        </span>
+                                    )}
+                                    {!isAssignedLoading && assignedShortIds.size > 0 && (
+                                        <span className="ml-2 text-muted-foreground font-normal text-xs">
+                                            • {assignedShortIds.size} assigned
+                                        </span>
+                                    )}
                                     {selectedShortIds.length > 0 && (
-                                        <span className="ml-2 text-primary">
+                                        <span className="ml-2 text-primary font-normal text-xs">
                                             • {selectedShortIds.length} selected
                                         </span>
                                     )}
                                 </Label>
                                 <div className="flex-1 min-h-0 border rounded-md overflow-hidden relative">
                                     <div className="absolute inset-0 overflow-y-auto">
-                                        {isShortsLoading || isAssignedLoading ? (
+                                        {isShortsLoading ? (
                                             <div className="p-4 space-y-2">
-                                                {Array.from({ length: 8 }).map((_, i) => (
+                                                {Array.from({ length: 6 }).map((_, i) => (
                                                     <Skeleton key={i} className="h-12 w-full" />
                                                 ))}
                                             </div>
@@ -511,129 +608,112 @@ export default function AssignShortsPage() {
                                                 <div className="text-center">
                                                     <Video className="mx-auto h-8 w-8 opacity-20" />
                                                     <p className="mt-2">
-                                                        {shortSearch
-                                                            ? "No shorts found matching search"
-                                                            : "No available shorts to assign"}
+                                                        {shortSearch ? "No shorts found matching search" : "No published shorts available"}
                                                     </p>
                                                 </div>
                                             </div>
                                         ) : (
                                             <div className="p-2 space-y-2">
-                                                {filteredShorts.map((short) => (
-                                                    <div
-                                                        key={short._id}
-                                                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedShortIds.includes(short._id)
-                                                                ? "bg-primary/5 border-primary"
-                                                                : "hover:bg-muted/50"
+                                                {filteredShorts.map((short) => {
+                                                    const alreadyAssigned = assignedShortIds.has(short._id);
+                                                    const isSelected = selectedShortIds.includes(short._id);
+                                                    return (
+                                                        <div
+                                                            key={short._id}
+                                                            className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                                                                alreadyAssigned
+                                                                    ? "opacity-60 bg-muted/30 cursor-not-allowed"
+                                                                    : isSelected
+                                                                    ? "bg-primary/5 border-primary cursor-pointer"
+                                                                    : "hover:bg-muted/50 cursor-pointer"
                                                             }`}
-                                                        onClick={() => handleShortToggle(short._id)}
-                                                    >
-                                                        <Checkbox
-                                                            checked={selectedShortIds.includes(short._id)}
-                                                            className="mt-1"
-                                                        />
-                                                        <div className="flex-1 min-w-0">
-                                                            <h4 className="font-medium truncate" title={short.title}>
-                                                                {short.title.length > 20
-                                                                    ? short.title.slice(0, 20) + "..."
-                                                                    : short.title}
-                                                            </h4>
-                                                            <p className="text-sm text-muted-foreground line-clamp-2">
-                                                                {short.description.length > 50
-                                                                    ? short.description.slice(0, 50) + "..."
-                                                                    : short.description}
-                                                            </p>
-                                                            <div className="mt-1 flex items-center gap-1 flex-wrap">
-                                                                <Badge variant="outline" className="text-xs capitalize">
-                                                                    {short.accessLevel}
-                                                                </Badge>
-                                                                <Badge variant="outline" className="text-xs">
-                                                                    {Math.round(short.durationSeconds)}s
-                                                                </Badge>
-                                                                {short.tags.slice(0, 3).map((tag) => (
-                                                                    <Badge
-                                                                        key={tag}
-                                                                        variant="outline"
-                                                                        className="text-xs"
-                                                                    >
-                                                                        {tag}
-                                                                    </Badge>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                        {short.thumbnailUrl && (
-                                                            <img
-                                                                src={short.thumbnailUrl}
-                                                                alt=""
-                                                                className="w-28 h-20 object-cover rounded"
+                                                            onClick={() => !alreadyAssigned && handleShortToggle(short._id)}
+                                                        >
+                                                            <Checkbox
+                                                                checked={isSelected || alreadyAssigned}
+                                                                disabled={alreadyAssigned}
+                                                                className="mt-1"
                                                             />
-                                                        )}
-                                                    </div>
-                                                ))}
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="flex items-center gap-2">
+                                                                    <h4 className="font-medium truncate" title={short.title}>
+                                                                        {short.title}
+                                                                    </h4>
+                                                                    {alreadyAssigned && (
+                                                                        <Badge className="text-xs shrink-0 bg-emerald-100 text-emerald-800 border-transparent shadow-none hover:bg-emerald-100">
+                                                                            Assigned
+                                                                        </Badge>
+                                                                    )}
+                                                                </div>
+                                                                <p className="text-sm text-muted-foreground line-clamp-1">
+                                                                    {short.description}
+                                                                </p>
+                                                                <div className="mt-1 flex items-center gap-1 flex-wrap">
+                                                                    <Badge variant="outline" className="text-xs capitalize">
+                                                                        {short.accessLevel}
+                                                                    </Badge>
+                                                                    <Badge variant="outline" className="text-xs">
+                                                                        {Math.round(short.durationSeconds)}s
+                                                                    </Badge>
+                                                                    {short.tags.slice(0, 3).map((tag) => (
+                                                                        <Badge key={tag} variant="outline" className="text-xs">
+                                                                            {tag}
+                                                                        </Badge>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                            {short.thumbnailUrl && (
+                                                                <img
+                                                                    src={short.thumbnailUrl}
+                                                                    alt=""
+                                                                    className="w-28 h-20 object-cover rounded shrink-0"
+                                                                />
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         )}
                                     </div>
                                 </div>
 
-                                <div className="flex items-center justify-between pt-2">
+                                {/* Shorts pagination */}
+                                <div className="flex items-center justify-between pt-1">
                                     <div className="text-sm text-muted-foreground">
-                                        {isShortsLoading ? (
-                                            "Loading..."
-                                        ) : shortsMeta && shortsMeta.total > 0 ? (
+                                        {isShortsLoading ? "Loading…" : shortsMeta && shortsMeta.total > 0 ? (
                                             <>
-                                                Showing{" "}
-                                                {Math.min(
-                                                    (shortsMeta.page - 1) * shortsMeta.limit + 1,
-                                                    shortsMeta.total
-                                                )}{" "}
-                                                to {Math.min(shortsMeta.page * shortsMeta.limit, shortsMeta.total)} of{" "}
-                                                {shortsMeta.total} shorts
+                                                Showing {Math.min((shortsMeta.page - 1) * shortsMeta.limit + 1, shortsMeta.total)}{" "}
+                                                to {Math.min(shortsMeta.page * shortsMeta.limit, shortsMeta.total)} of {shortsMeta.total} shorts
                                             </>
-                                        ) : (
-                                            "Showing 0 to 0 of 0 shorts"
-                                        )}
+                                        ) : "Showing 0 of 0 shorts"}
                                     </div>
                                     <div className="flex items-center space-x-2">
-                                        <div className="flex items-center space-x-2 mr-4">
-                                            <span className="text-sm text-muted-foreground">
-                                                Rows per page
-                                            </span>
-                                            <Select
-                                                value={shortsLimit.toString()}
-                                                onValueChange={(val) => {
-                                                    setShortsLimit(Number(val));
-                                                    setShortsPage(1);
-                                                }}
-                                            >
-                                                <SelectTrigger className="h-8 w-[70px]">
-                                                    <SelectValue placeholder={shortsLimit} />
-                                                </SelectTrigger>
-                                                <SelectContent side="top">
-                                                    <SelectItem value="10">10</SelectItem>
-                                                    <SelectItem value="20">20</SelectItem>
-                                                    <SelectItem value="50">50</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
+                                        <Select
+                                            value={shortsLimit.toString()}
+                                            onValueChange={(val) => { setShortsLimit(Number(val)); setShortsPage(1); }}
+                                        >
+                                            <SelectTrigger className="h-8 w-[70px]">
+                                                <SelectValue placeholder={shortsLimit} />
+                                            </SelectTrigger>
+                                            <SelectContent side="top">
+                                                <SelectItem value="10">10</SelectItem>
+                                                <SelectItem value="20">20</SelectItem>
+                                                <SelectItem value="50">50</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        <Button variant="outline" size="sm"
                                             onClick={() => setShortsPage((p) => Math.max(1, p - 1))}
                                             disabled={!shortsMeta?.hasPrev || isShortsLoading}
                                         >
                                             <ChevronLeft className="h-4 w-4" />
-                                            Previous
                                         </Button>
-                                        <div className="text-sm font-medium">
-                                            Page {shortsMeta?.page || 1} of {shortsMeta?.totalPages || 1}
-                                        </div>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
+                                        <span className="text-sm font-medium">
+                                            {shortsMeta?.page || 1} / {shortsMeta?.totalPages || 1}
+                                        </span>
+                                        <Button variant="outline" size="sm"
                                             onClick={() => setShortsPage((p) => p + 1)}
                                             disabled={!shortsMeta?.hasNext || isShortsLoading}
                                         >
-                                            Next
                                             <ChevronRight className="h-4 w-4" />
                                         </Button>
                                     </div>
@@ -643,16 +723,12 @@ export default function AssignShortsPage() {
                     )}
 
                     <DialogFooter>
-                        <Button
-                            variant="outline"
-                            onClick={() => setIsAssignDialogOpen(false)}
-                            disabled={bulkAssignMutation.isPending}
-                        >
+                        <Button variant="outline" onClick={() => { setIsAssignDialogOpen(false); resetDialogState(); }} disabled={bulkAssignMutation.isPending}>
                             Cancel
                         </Button>
                         <Button
                             onClick={handleAssignSubmit}
-                            disabled={selectedShortIds.length === 0 || bulkAssignMutation.isPending}
+                            disabled={selectedShortIds.length === 0 || bulkAssignMutation.isPending || !profileReady}
                         >
                             {bulkAssignMutation.isPending && (
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -663,24 +739,49 @@ export default function AssignShortsPage() {
                 </DialogContent>
             </Dialog>
 
-            <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+            {/* ── View Assigned Dialog ── */}
+            <Dialog open={isViewDialogOpen} onOpenChange={(open) => { if (!open) { setIsViewDialogOpen(false); resetDialogState(); } }}>
                 <DialogContent className="sm:max-w-[900px] h-[85vh] flex flex-col">
                     <DialogHeader>
                         <DialogTitle>Assigned Shorts</DialogTitle>
                         <DialogDescription>
-                            Short videos assigned to {selectedUser?.name}
+                            Short videos assigned to{" "}
+                            <span className="font-medium text-foreground">{selectedUser?.name}</span>
                         </DialogDescription>
                     </DialogHeader>
 
                     {selectedUser && (
                         <div className="flex-1 flex flex-col gap-4 overflow-hidden p-1">
+                            {/* Profile picker — only for Individual Learners */}
+                            {isUserTab && (
+                                <div className="space-y-2">
+                                    <Label className="flex items-center gap-1.5">
+                                        <Layers className="h-4 w-4" />
+                                        Viewing profile
+                                    </Label>
+                                    <ProfilePicker
+                                        profiles={userProfiles}
+                                        isLoading={isProfilesLoading}
+                                        selectedProfileId={selectedProfileId}
+                                        onSelect={setSelectedProfileId}
+                                    />
+                                </div>
+                            )}
+
                             <div className="flex-1 min-h-0 border rounded-md overflow-hidden relative">
                                 <div className="absolute inset-0 overflow-y-auto">
                                     {isAssignedLoading ? (
-                                        <div className="space-y-2">
-                                            {Array.from({ length: 8 }).map((_, i) => (
-                                                <Skeleton key={i} className="h-12 w-full" />
+                                        <div className="space-y-2 p-3">
+                                            {Array.from({ length: 6 }).map((_, i) => (
+                                                <Skeleton key={i} className="h-20 w-full" />
                                             ))}
+                                        </div>
+                                    ) : !profileReady ? (
+                                        <div className="flex h-[200px] items-center justify-center text-muted-foreground">
+                                            <div className="text-center">
+                                                <Layers className="mx-auto h-8 w-8 opacity-20" />
+                                                <p className="mt-2">Select a profile above to view assigned shorts.</p>
+                                            </div>
                                         </div>
                                     ) : assignedShorts.length === 0 ? (
                                         <div className="flex h-[200px] items-center justify-center text-muted-foreground">
@@ -690,7 +791,7 @@ export default function AssignShortsPage() {
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="space-y-3">
+                                        <div className="space-y-3 p-3">
                                             {assignedShorts.map((assignment) => (
                                                 <div
                                                     key={assignment.short._id}
@@ -700,17 +801,13 @@ export default function AssignShortsPage() {
                                                         <img
                                                             src={assignment.short.thumbnailUrl}
                                                             alt=""
-                                                            className="w-28 h-20 object-cover rounded"
+                                                            className="w-28 h-20 object-cover rounded shrink-0"
                                                         />
                                                     )}
                                                     <div className="flex-1 min-w-0">
-                                                        <h4 className="font-medium truncate">
-                                                            {assignment.short.title}
-                                                        </h4>
+                                                        <h4 className="font-medium truncate">{assignment.short.title}</h4>
                                                         <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
-                                                            <span>
-                                                                Assigned by {assignment.assignedBy.name}
-                                                            </span>
+                                                            <span>Assigned by {assignment.assignedBy.name}</span>
                                                             <span>•</span>
                                                             <span>{formatRelativeTime(assignment.assignedAt)}</span>
                                                         </div>
@@ -719,7 +816,7 @@ export default function AssignShortsPage() {
                                                                 value={assignment.progress.percentCompleted}
                                                                 className="h-2 flex-1"
                                                             />
-                                                            <span className="text-xs text-muted-foreground w-14 text-right">
+                                                            <span className="text-xs text-muted-foreground w-10 text-right">
                                                                 {assignment.progress.percentCompleted}%
                                                             </span>
                                                         </div>
@@ -727,7 +824,7 @@ export default function AssignShortsPage() {
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
-                                                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                        className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0"
                                                         onClick={() => handleUnassign(assignment.short._id)}
                                                         disabled={unassignMutation.isPending}
                                                     >
@@ -744,63 +841,43 @@ export default function AssignShortsPage() {
                                 </div>
                             </div>
 
-                            <div className="flex items-center justify-between pt-2">
+                            {/* Assigned shorts pagination */}
+                            <div className="flex items-center justify-between">
                                 <div className="text-sm text-muted-foreground">
-                                    {isAssignedLoading ? (
-                                        "Loading..."
-                                    ) : assignedMeta && assignedMeta.total > 0 ? (
+                                    {isAssignedLoading ? "Loading…" : assignedMeta && assignedMeta.total > 0 ? (
                                         <>
-                                            Showing{" "}
-                                            {Math.min(
-                                                (assignedMeta.page - 1) * assignedMeta.limit + 1,
-                                                assignedMeta.total
-                                            )}{" "}
-                                            to {Math.min(assignedMeta.page * assignedMeta.limit, assignedMeta.total)} of{" "}
-                                            {assignedMeta.total} shorts
+                                            Showing {Math.min((assignedMeta.page - 1) * assignedMeta.limit + 1, assignedMeta.total)}{" "}
+                                            to {Math.min(assignedMeta.page * assignedMeta.limit, assignedMeta.total)} of {assignedMeta.total} shorts
                                         </>
-                                    ) : (
-                                        "Showing 0 to 0 of 0 shorts"
-                                    )}
+                                    ) : "Showing 0 of 0 shorts"}
                                 </div>
                                 <div className="flex items-center space-x-2">
-                                    <div className="flex items-center space-x-2 mr-4">
-                                        <span className="text-sm text-muted-foreground">Rows per page</span>
-                                        <Select
-                                            value={assignedLimit.toString()}
-                                            onValueChange={(val) => {
-                                                setAssignedLimit(Number(val));
-                                                setAssignedPage(1);
-                                            }}
-                                        >
-                                            <SelectTrigger className="h-8 w-[70px]">
-                                                <SelectValue placeholder={assignedLimit} />
-                                            </SelectTrigger>
-                                            <SelectContent side="top">
-                                                <SelectItem value="10">10</SelectItem>
-                                                <SelectItem value="20">20</SelectItem>
-                                                <SelectItem value="50">50</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
+                                    <Select
+                                        value={assignedLimit.toString()}
+                                        onValueChange={(val) => { setAssignedLimit(Number(val)); setAssignedPage(1); }}
+                                    >
+                                        <SelectTrigger className="h-8 w-[70px]">
+                                            <SelectValue placeholder={assignedLimit} />
+                                        </SelectTrigger>
+                                        <SelectContent side="top">
+                                            <SelectItem value="10">10</SelectItem>
+                                            <SelectItem value="20">20</SelectItem>
+                                            <SelectItem value="50">50</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <Button variant="outline" size="sm"
                                         onClick={() => setAssignedPage((p) => Math.max(1, p - 1))}
                                         disabled={!assignedMeta?.hasPrev || isAssignedLoading}
                                     >
                                         <ChevronLeft className="h-4 w-4" />
-                                        Previous
                                     </Button>
-                                    <div className="text-sm font-medium">
-                                        Page {assignedMeta?.page || 1} of {assignedMeta?.totalPages || 1}
-                                    </div>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
+                                    <span className="text-sm font-medium">
+                                        {assignedMeta?.page || 1} / {assignedMeta?.totalPages || 1}
+                                    </span>
+                                    <Button variant="outline" size="sm"
                                         onClick={() => setAssignedPage((p) => p + 1)}
                                         disabled={!assignedMeta?.hasNext || isAssignedLoading}
                                     >
-                                        Next
                                         <ChevronRight className="h-4 w-4" />
                                     </Button>
                                 </div>

@@ -147,13 +147,9 @@ export default function CreateShort() {
     // Polling: check if the Cloudinary webhook has finished processing
     const { data: uploadStatus } = usePollUploadStatus(currentShortId, isPolling);
 
-    // When polling detects videoReady, stop polling and refresh the short.
-    // Reset hasLoadedInitialData so the new video fields (cloudinaryUrl, thumbnail,
-    // duration) are applied to the form from the fresh server response.
     useEffect(() => {
         if (isPolling && uploadStatus?.videoReady) {
             setIsPolling(false);
-            hasLoadedInitialData.current = false;
             refetchShort();
             toast.success('Video processed successfully!');
         }
@@ -163,23 +159,15 @@ export default function CreateShort() {
     const deleteShortVideoMutation = useDeleteShortVideo();
     const retrySubtitlesMutation = useRetrySubtitles();
 
-    // Load existing short data in edit mode.
-    // hasLoadedInitialData: true after the first server response populates the form.
-    // Subsequent refetches (triggered by auto-save cache invalidation) must NOT
-    // overwrite what the user is currently typing.
+    // Populate the form exactly once per short (guards against auto-save refetches
+    // overwriting in-progress edits). Resets when navigating to a different short.
     const isInitialLoad = useRef(true);
     const hasLoadedInitialData = useRef(false);
-    // Reset the flag whenever the short being edited changes (e.g. navigating between drafts).
-    useEffect(() => {
-        hasLoadedInitialData.current = false;
-    }, [currentShortId]);
     useEffect(() => {
         if (existingShort && currentShortId) {
-            // Skip if we already populated the form once for this short — prevents
-            // auto-save-triggered refetches from reverting in-progress edits.
             if (hasLoadedInitialData.current) return;
             hasLoadedInitialData.current = true;
-            isInitialLoad.current = true; // suppress auto-save during population
+            isInitialLoad.current = true;
             setFormData({
                 title: existingShort.title || '',
                 description: existingShort.description || '',
@@ -191,13 +179,29 @@ export default function CreateShort() {
                 thumbnailUrl: sanitizeUrl(existingShort.thumbnailUrl || ''),
                 durationSeconds: existingShort.durationSeconds || 0,
             });
-            // Allow auto-save after the render cycle that applied the loaded data
             setTimeout(() => { isInitialLoad.current = false; }, 0);
         } else if (!currentShortId) {
-            // New short: allow auto-save immediately
+            hasLoadedInitialData.current = false;
             isInitialLoad.current = false;
         }
     }, [existingShort, currentShortId]);
+
+    // When cloudinaryId changes server-side (new upload processed or video removed),
+    // sync only the video fields — never touch the user's text edits.
+    const prevCloudinaryIdRef = useRef<string | undefined>(undefined);
+    useEffect(() => {
+        if (!hasLoadedInitialData.current) return; // initial load handles this
+        const newId = existingShort?.cloudinaryId ?? '';
+        if (newId === prevCloudinaryIdRef.current) return;
+        prevCloudinaryIdRef.current = newId;
+        setFormData(prev => ({
+            ...prev,
+            cloudinaryId: newId,
+            cloudinaryUrl: sanitizeUrl(existingShort?.cloudinaryUrl || ''),
+            thumbnailUrl: sanitizeUrl(existingShort?.thumbnailUrl || ''),
+            durationSeconds: existingShort?.durationSeconds || 0,
+        }));
+    }, [existingShort?.cloudinaryId, existingShort?.cloudinaryUrl, existingShort?.thumbnailUrl, existingShort?.durationSeconds]);
 
     // ─── Auto-save state ───────────────────────────────────────────────────────
     type AutoSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -206,12 +210,10 @@ export default function CreateShort() {
     const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const savedBadgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    /**
-     * Core auto-save function.
-     * - If no shell exists yet and the title is non-empty, creates one via POST /v1/short-videos.
-     * - If a shell already exists, patches metadata via PUT /short-videos/:id.
-     * Silent — does NOT show toast (status badge in header is used instead).
-     */
+    const cancelAutoSave = useCallback(() => {
+        cancelAutoSave();
+    }, []);
+
     const performAutoSave = useCallback(async (data: ShortFormData, shellId?: string) => {
         // Both title and description are required to create a shell — don't attempt until both are present
         if (!shellId && (!data.title.trim() || !data.description.trim())) return;
@@ -275,18 +277,14 @@ export default function CreateShort() {
 
         setHasUnsavedChanges(false);
 
-        // Capture the snapshot
         const snapshot = formData;
 
         if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
         autoSaveTimer.current = setTimeout(() => {
-            // Read from the ref to avoid stale closure of currentShortId
             performAutoSave(snapshot, currentShortIdRef.current);
         }, 1500);
 
-        return () => {
-            if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-        };
+        return cancelAutoSave;
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [formData.title, formData.description, formData.tags, formData.accessLevel, formData.visibility]);
 
@@ -378,7 +376,7 @@ export default function CreateShort() {
         }
 
         // Cancel any pending auto-save to prevent a race with the upload's own shell creation
-        if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
+        cancelAutoSave();
         setVideoFile(file);
         setIsUploading(true);
         setUploadProgress(0);
@@ -533,7 +531,7 @@ export default function CreateShort() {
      */
     const handleSaveDraft = async () => {
         // Cancel any pending debounced auto-save to prevent a double-create race
-        if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
+        cancelAutoSave();
         setIsSaving(true);
         try {
             if (currentShortId) {
@@ -586,7 +584,7 @@ export default function CreateShort() {
      */
     const handleSubmitForReview = async () => {
         if (!validateForm()) return;
-        if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
+        cancelAutoSave();
         setIsSubmitting(true);
         try {
             // Ensure a shell exists before changing status
@@ -642,7 +640,7 @@ export default function CreateShort() {
      */
     const handlePublish = async () => {
         if (!validateForm()) return;
-        if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
+        cancelAutoSave();
         setIsPublishing(true);
         try {
             let shellId = currentShortId;
@@ -701,7 +699,7 @@ export default function CreateShort() {
             toast.error('Please enter a rejection reason');
             return;
         }
-        if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
+        cancelAutoSave();
         setIsRejecting(true);
         try {
             await changeStatusMutation.mutateAsync({

@@ -8,6 +8,15 @@ import { fetchAssignableUsers } from "@/services/assign-course.service";
 
 export type AssignableRole = "trainee" | "user";
 
+export interface UserProfile {
+    _id: string;
+    userId: string;
+    name: string;
+    avatar: string;
+    isDefault: boolean;
+    createdAt: string;
+}
+
 export interface PublishedShortVideo {
     _id: string;
     title: string;
@@ -65,17 +74,17 @@ export async function fetchAssignableUsersForShorts(role: AssignableRole, params
     }>;
 }
 
+export async function fetchUserProfiles(userId: string): Promise<UserProfile[]> {
+    const response = await apiClient.get("/admin/profiles", { params: { userId } });
+    const data = response.data.data;
+    return Array.isArray(data) ? data : [data].filter(Boolean);
+}
+
 export async function fetchPublishedShortVideos(params: FetchShortsParams = {}) {
     const { page = 1, limit = 10, sortBy = "createdAt", order = "desc" } = params;
 
     const response = await apiClient.get("/short-videos", {
-        params: {
-            page,
-            limit,
-            status: "published",
-            sortBy,
-            order,
-        },
+        params: { page, limit, status: "published", sortBy, order },
     });
 
     const shorts = response.data.data as PublishedShortVideo[];
@@ -86,12 +95,12 @@ export async function fetchPublishedShortVideos(params: FetchShortsParams = {}) 
 
 export async function fetchUserAssignedShorts(
     userId: string,
-    params: { page?: number; limit?: number } = {}
+    params: { page?: number; limit?: number; profileId?: string } = {}
 ) {
-    const { page = 1, limit = 10 } = params;
+    const { page = 1, limit = 10, profileId } = params;
 
     const response = await apiClient.get(`/assign-shorts/assignees/${userId}`, {
-        params: { page, limit },
+        params: { page, limit, ...(profileId ? { profileId } : {}) },
     });
 
     const shorts = response.data.data as AssignedShort[];
@@ -100,21 +109,25 @@ export async function fetchUserAssignedShorts(
     return { shorts, meta: enrichMeta(meta) };
 }
 
-export async function assignShort(userId: string, shortVideoId: string) {
-    const response = await apiClient.post("/assign-shorts", { userId, shortVideoId });
+export async function assignShort(userId: string, shortVideoId: string, profileId?: string) {
+    const response = await apiClient.post("/assign-shorts", {
+        userId,
+        shortVideoId,
+        ...(profileId ? { profileId } : {}),
+    });
     return response.data;
 }
 
 export async function assignShortsBulk(
-    items: Array<{ userId: string; shortVideoId: string }>
+    items: Array<{ userId: string; shortVideoId: string; profileId?: string }>
 ) {
     const response = await apiClient.post("/assign-shorts/bulk", { items });
     return response.data;
 }
 
-export async function unassignShort(userId: string, shortVideoId: string) {
+export async function unassignShort(userId: string, shortVideoId: string, profileId?: string) {
     const response = await apiClient.delete("/assign-shorts", {
-        data: { userId, shortVideoId },
+        data: { userId, shortVideoId, ...(profileId ? { profileId } : {}) },
     });
     return response.data;
 }

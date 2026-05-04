@@ -206,6 +206,9 @@ export function ShortsManager({
         navigate(rolePath ? `/${rolePath}/content/shorts/create` : `/content/shorts/create`);
     };
 
+    // Must match the number of <TableHead> elements in the table header.
+    const SHORTS_TABLE_COLS = 9;
+
     return (
         <div className="space-y-6 p-8 h-full flex flex-col overflow-hidden">
             {/* Header section */}
@@ -303,14 +306,14 @@ export function ShortsManager({
                             {isLoading ? (
                                 Array.from({ length: 8 }).map((_, i) => (
                                     <TableRow key={i}>
-                                        <TableCell colSpan={9} className="p-2">
+                                        <TableCell colSpan={SHORTS_TABLE_COLS} className="p-2">
                                             <Skeleton className="h-12 w-full" />
                                         </TableCell>
                                     </TableRow>
                                 ))
                             ) : isError ? (
                                 <TableRow>
-                                    <TableCell colSpan={9}>
+                                    <TableCell colSpan={SHORTS_TABLE_COLS}>
                                         <div className="flex h-40 items-center justify-center text-destructive">
                                             <div className="flex flex-col items-center justify-center gap-2">
                                                 <AlertCircle className="h-8 w-8" />
@@ -324,7 +327,7 @@ export function ShortsManager({
                                 </TableRow>
                             ) : shorts.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={9}>
+                                    <TableCell colSpan={SHORTS_TABLE_COLS}>
                                         <div className="flex h-40 items-center justify-center text-muted-foreground">
                                             No shorts found
                                         </div>
