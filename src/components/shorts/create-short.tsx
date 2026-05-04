@@ -147,10 +147,13 @@ export default function CreateShort() {
     // Polling: check if the Cloudinary webhook has finished processing
     const { data: uploadStatus } = usePollUploadStatus(currentShortId, isPolling);
 
-    // When polling detects videoReady, stop polling and refresh the short
+    // When polling detects videoReady, stop polling and refresh the short.
+    // Reset hasLoadedInitialData so the new video fields (cloudinaryUrl, thumbnail,
+    // duration) are applied to the form from the fresh server response.
     useEffect(() => {
         if (isPolling && uploadStatus?.videoReady) {
             setIsPolling(false);
+            hasLoadedInitialData.current = false;
             refetchShort();
             toast.success('Video processed successfully!');
         }
@@ -160,12 +163,23 @@ export default function CreateShort() {
     const deleteShortVideoMutation = useDeleteShortVideo();
     const retrySubtitlesMutation = useRetrySubtitles();
 
-    // Load existing short data in edit mode
-    // A ref guards against triggering auto-save during the initial data-population.
+    // Load existing short data in edit mode.
+    // hasLoadedInitialData: true after the first server response populates the form.
+    // Subsequent refetches (triggered by auto-save cache invalidation) must NOT
+    // overwrite what the user is currently typing.
     const isInitialLoad = useRef(true);
+    const hasLoadedInitialData = useRef(false);
+    // Reset the flag whenever the short being edited changes (e.g. navigating between drafts).
+    useEffect(() => {
+        hasLoadedInitialData.current = false;
+    }, [currentShortId]);
     useEffect(() => {
         if (existingShort && currentShortId) {
-            isInitialLoad.current = true; // mark as loading — suppress auto-save
+            // Skip if we already populated the form once for this short — prevents
+            // auto-save-triggered refetches from reverting in-progress edits.
+            if (hasLoadedInitialData.current) return;
+            hasLoadedInitialData.current = true;
+            isInitialLoad.current = true; // suppress auto-save during population
             setFormData({
                 title: existingShort.title || '',
                 description: existingShort.description || '',

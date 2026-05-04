@@ -291,15 +291,6 @@ export function ShortsManager({
                                 <TableHead className="w-[15%] bg-background py-2">Tags</TableHead>
                                 <TableHead className="w-[10%] bg-background py-2">Duration</TableHead>
                                 <TableHead className="w-[15%] bg-background py-2">Created By</TableHead>
-                                <TableHead
-                                    className="w-[10%] bg-background py-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                                    onClick={() => handleSort("createdAt")}
-                                >
-                                    <div className="flex items-center gap-1">
-                                        Created At
-                                        {sortBy === "createdAt" && <ArrowUpDown className="h-3 w-3" />}
-                                    </div>
-                                </TableHead>
                                 <TableHead className="w-[10%] bg-background py-2">
                                     <div className="flex items-center gap-1">
                                         Updated At
@@ -312,14 +303,14 @@ export function ShortsManager({
                             {isLoading ? (
                                 Array.from({ length: 8 }).map((_, i) => (
                                     <TableRow key={i}>
-                                        <TableCell colSpan={10} className="p-2">
+                                        <TableCell colSpan={9} className="p-2">
                                             <Skeleton className="h-12 w-full" />
                                         </TableCell>
                                     </TableRow>
                                 ))
                             ) : isError ? (
                                 <TableRow>
-                                    <TableCell colSpan={10}>
+                                    <TableCell colSpan={9}>
                                         <div className="flex h-40 items-center justify-center text-destructive">
                                             <div className="flex flex-col items-center justify-center gap-2">
                                                 <AlertCircle className="h-8 w-8" />
@@ -333,7 +324,7 @@ export function ShortsManager({
                                 </TableRow>
                             ) : shorts.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={10}>
+                                    <TableCell colSpan={9}>
                                         <div className="flex h-40 items-center justify-center text-muted-foreground">
                                             No shorts found
                                         </div>
@@ -392,9 +383,6 @@ export function ShortsManager({
                                                             {short.createdBy?.email}
                                                         </span>
                                                     </div>
-                                                </TableCell>
-                                                <TableCell className="text-muted-foreground py-2">
-                                                    {formatRelativeTime(short.createdAt)}
                                                 </TableCell>
                                                 <TableCell className="text-muted-foreground py-2">
                                                     {formatRelativeTime(short.updatedAt)}
