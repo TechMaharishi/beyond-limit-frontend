@@ -61,7 +61,6 @@ import {
     useAssignableUsers,
     usePublishedCourses,
     useUserAssignedCourses,
-    useAssignCourse,
     useAssignCoursesBulk,
     useUnassignCourse,
     useUserProfilesForCourseAssignment,
@@ -192,7 +191,6 @@ export default function AssignCoursePage() {
         }
     );
 
-    const assignMutation = useAssignCourse();
     const assignBulkMutation = useAssignCoursesBulk();
     const unassignMutation = useUnassignCourse();
 
