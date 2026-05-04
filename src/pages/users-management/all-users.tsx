@@ -174,23 +174,23 @@ const createUser = async (payload: CreateUserPayload) => {
 };
 
 const fetchAdminUserProfiles = async (userId: string): Promise<Profile[]> => {
-  const response = await apiClient.get("/admin/profiles", { params: { userId } });
+  const response = await apiClient.get("/admin/user-profiles", { params: { userId } });
   return response.data?.data ?? [];
 };
 
 const createAdminProfile = async (payload: { userId: string; name: string; avatar?: string }) => {
-  const response = await apiClient.post("/admin/profiles", payload);
+  const response = await apiClient.post("/admin/user-profiles", payload);
   return response.data;
 };
 
 const updateAdminProfile = async (payload: { profileId: string; name?: string; avatar?: string }) => {
   const { profileId, ...data } = payload;
-  const response = await apiClient.patch(`/admin/profiles/${profileId}`, data);
+  const response = await apiClient.patch(`/admin/user-profiles/${profileId}`, data);
   return response.data;
 };
 
 const deleteAdminProfile = async (profileId: string) => {
-  const response = await apiClient.delete(`/admin/profiles/${profileId}`);
+  const response = await apiClient.delete(`/admin/user-profiles/${profileId}`);
   return response.data;
 };
 

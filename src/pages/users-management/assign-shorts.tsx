@@ -133,6 +133,7 @@ function ProfilePicker({ profiles, isLoading, selectedProfileId, onSelect }: Pro
 export default function AssignShortsPage() {
     const { data: session } = authClient.useSession();
     const currentUserRole = session?.user?.role || "user";
+    const currentUserId = session?.user?.id || "";
     const assignableRoles = getAssignableRoles(currentUserRole);
     const [activeTab, setActiveTab] = useState<"trainee" | "user">(
         assignableRoles[0] || "user"
@@ -831,6 +832,7 @@ export default function AssignShortsPage() {
                                                             </span>
                                                         </div>
                                                     </div>
+                                                    {(currentUserRole === "admin" || assignment.assignedBy.id === currentUserId) && (
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
@@ -844,6 +846,7 @@ export default function AssignShortsPage() {
                                                             <Trash2 className="h-4 w-4" />
                                                         )}
                                                     </Button>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>

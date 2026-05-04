@@ -75,7 +75,7 @@ export async function fetchAssignableUsersForShorts(role: AssignableRole, params
 }
 
 export async function fetchUserProfiles(userId: string): Promise<UserProfile[]> {
-    const response = await apiClient.get("/admin/profiles", { params: { userId } });
+    const response = await apiClient.get("/admin/user-profiles", { params: { userId } });
     const data = response.data.data;
     return Array.isArray(data) ? data : [data].filter(Boolean);
 }
@@ -83,8 +83,8 @@ export async function fetchUserProfiles(userId: string): Promise<UserProfile[]> 
 export async function fetchPublishedShortVideos(params: FetchShortsParams = {}) {
     const { page = 1, limit = 10, sortBy = "createdAt", order = "desc" } = params;
 
-    const response = await apiClient.get("/short-videos", {
-        params: { page, limit, status: "published", sortBy, order },
+    const response = await apiClient.get("/short-videos/published-videos", {
+        params: { page, limit, sortBy, order },
     });
 
     const shorts = response.data.data as PublishedShortVideo[];
