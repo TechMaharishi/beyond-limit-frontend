@@ -5,7 +5,7 @@ import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
  * This handles the "Failed to fetch dynamically imported module" error that occurs
  * when a new deployment happens and the user tries to navigate to a route with an old hash.
  */
-export function lazyLoad<T extends ComponentType<any>>(
+export function lazyLoad<T extends ComponentType<unknown>>(
   factory: () => Promise<{ default: T }>
 ): LazyExoticComponent<T> {
   return lazy(() => {

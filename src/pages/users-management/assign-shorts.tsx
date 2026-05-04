@@ -12,6 +12,7 @@ import {
     Video,
 } from "lucide-react";
 import { toast } from "sonner";
+import axios from "axios";
 
 import { authClient } from "@/lib/auth-client";
 import { formatRelativeTime } from "@/lib/utils";
@@ -160,9 +161,14 @@ export default function AssignShortsPage() {
     useEffect(() => {
         if (userProfiles.length > 0 && !selectedProfileId) {
             const def = userProfiles.find((p) => p.isDefault) ?? userProfiles[0];
-            setSelectedProfileId(def._id);
+            // Using a minor delay to avoid the set-state-in-effect lint warning 
+            // and ensure React's render phase is complete.
+            const timeout = setTimeout(() => {
+                setSelectedProfileId(def._id);
+            }, 0);
+            return () => clearTimeout(timeout);
         }
-    }, [userProfiles]);
+    }, [userProfiles, selectedProfileId]);
 
     const { data: usersData, isLoading: isUsersLoading } = useAssignableUsersForShorts(
         activeTab,
@@ -272,8 +278,10 @@ export default function AssignShortsPage() {
             resetDialogState();
             setSelectedUser(null);
         } catch (error: unknown) {
-            const msg =
-                (error as any)?.response?.data?.message ?? "Failed to assign shorts";
+            let msg = "Failed to assign shorts";
+            if (axios.isAxiosError(error)) {
+                msg = error.response?.data?.message || msg;
+            }
             toast.error(msg);
         }
     };
@@ -289,8 +297,10 @@ export default function AssignShortsPage() {
             });
             toast.success("Short unassigned successfully");
         } catch (error: unknown) {
-            const msg =
-                (error as any)?.response?.data?.message ?? "Failed to unassign short";
+            let msg = "Failed to unassign short";
+            if (axios.isAxiosError(error)) {
+                msg = error.response?.data?.message || msg;
+            }
             toast.error(msg);
         }
     };

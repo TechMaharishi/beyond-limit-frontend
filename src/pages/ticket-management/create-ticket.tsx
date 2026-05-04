@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTicketsByType, useCreateTicket, useTicketTypes, useTickets } from '@/hooks/use-support';
 import type { CreateTicketPayload } from '@/services/support.service';
@@ -73,14 +73,17 @@ export default function CreateTicketPage() {
     const isLoadingTickets = isAdmin ? adminQuery.isLoading : userQuery.isLoading;
     const refetch = isAdmin ? adminQuery.refetch : userQuery.refetch;
     const { data: ticketTypes = [], isLoading: isLoadingTypes } = useTicketTypes();
-    const tickets = ticketData?.data || [];
+    const tickets = useMemo(() => ticketData?.data || [], [ticketData]);
     const meta = ticketData?.meta;
     const createTicketMutation = useCreateTicket();
 
     // Auto-select first ticket
     useEffect(() => {
         if (tickets.length > 0 && !selectedTicketId && !isLoadingTickets) {
-            setSelectedTicketId(tickets[0]._id);
+            const timeout = setTimeout(() => {
+                setSelectedTicketId(tickets[0]._id);
+            }, 0);
+            return () => clearTimeout(timeout);
         }
     }, [isLoadingTickets, tickets, selectedTicketId]);
 

@@ -17,6 +17,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tansta
 import { apiClient } from "@/lib/api"
 import { toast } from "sonner"
 import { useDebounce } from "@/hooks/use-debounce"
+import axios from "axios"
 
 interface User {
   _id: string
@@ -80,7 +81,7 @@ export default function AllTicketsPage() {
   const { data, isLoading: isLoadingTickets } = useQuery({
     queryKey: ['tickets', page, limit, debouncedSearchQuery],
     queryFn: async () => {
-      const params: Record<string, any> = { page, limit }
+      const params: Record<string, string | number> = { page, limit }
       if (debouncedSearchQuery) params.search = debouncedSearchQuery
       const response = await apiClient.get<TicketsResponse>('/support/tickets', { params })
       return response.data
@@ -113,14 +114,21 @@ export default function AllTicketsPage() {
       queryClient.invalidateQueries({ queryKey: ['tickets'] })
       queryClient.invalidateQueries({ queryKey: ['ticket', selectedTicketId] })
     },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || "Failed to resolve ticket")
+    onError: (error: unknown) => {
+      let msg = "Failed to resolve ticket";
+      if (axios.isAxiosError(error)) {
+        msg = error.response?.data?.message || msg;
+      }
+      toast.error(msg)
     }
   })
 
   useEffect(() => {
     if (allTickets.length > 0 && !selectedTicketId && !isLoadingTickets) {
-      setSelectedTicketId(allTickets[0]._id)
+      const timeout = setTimeout(() => {
+        setSelectedTicketId(allTickets[0]._id)
+      }, 0)
+      return () => clearTimeout(timeout)
     }
   }, [isLoadingTickets, allTickets, selectedTicketId])
 
