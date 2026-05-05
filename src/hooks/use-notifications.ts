@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
+import { toast } from "sonner";
 import {
     fetchNotifications,
     markNotificationRead,
@@ -104,4 +106,34 @@ export function useClearAllNotifications() {
         onError: (_err, _v, ctx) => restoreAll(queryClient, ctx?.snapshot ?? []),
         onSettled: () => queryClient.invalidateQueries({ queryKey: notificationsKeys.all }),
     });
+}
+
+/**
+ * Watches the polling feed and fires a Sonner toast for each notification
+ * that arrives after the initial load. Must be mounted once at the app shell level.
+ */
+export function useNotificationToasts() {
+    const { data: notifications = [] } = useNotifications({ limit: 50 });
+    const seenIds = useRef<Set<string> | null>(null);
+
+    useEffect(() => {
+        if (notifications.length === 0) return;
+
+        // On first data arrival, seed the set without showing toasts.
+        if (seenIds.current === null) {
+            seenIds.current = new Set(notifications.map((n) => n._id));
+            return;
+        }
+
+        // Any ID not yet in the set is genuinely new — show a toast.
+        for (const n of notifications) {
+            if (!seenIds.current.has(n._id)) {
+                seenIds.current.add(n._id);
+                toast(n.title, {
+                    description: n.body,
+                    duration: 6000,
+                });
+            }
+        }
+    }, [notifications]);
 }

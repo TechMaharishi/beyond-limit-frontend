@@ -10,6 +10,7 @@ import { Suspense } from "react"
 import { PageLoader } from "@/components/page-loader"
 import { ModeToggle } from "@/components/mode-toggle"
 import { NotificationBell } from "@/components/notifications/notification-bell"
+import { useNotificationToasts } from "@/hooks/use-notifications"
 
 /**
  * Main application layout shell.
@@ -23,6 +24,8 @@ import { NotificationBell } from "@/components/notifications/notification-bell"
  * - Suspense boundary for handling lazy-loaded route transitions gracefully
  */
 export function AppShell() {
+    useNotificationToasts();
+
     return (
         <SidebarProvider>
             <AppSidebar />
