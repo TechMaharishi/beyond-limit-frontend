@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator"
 import { Suspense } from "react"
 import { PageLoader } from "@/components/page-loader"
 import { ModeToggle } from "@/components/mode-toggle"
+import { NotificationBell } from "@/components/notifications/notification-bell"
 
 /**
  * Main application layout shell.
@@ -32,7 +33,8 @@ export function AppShell() {
                     <div className="flex items-center gap-2">
                         <h1 className="text-lg font-semibold">Beyond Limits Learning Hub Admin Panel</h1>
                     </div>
-                    <div className="ml-auto">
+                    <div className="ml-auto flex items-center gap-1">
+                        <NotificationBell />
                         <ModeToggle />
                     </div>
                 </header>
