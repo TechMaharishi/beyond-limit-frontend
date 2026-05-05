@@ -6,8 +6,16 @@ import './index.css'
 import { RouterProvider } from 'react-router-dom'
 import router from '@/routing'
 import { Toaster } from '@/components/ui/sonner'
+import { initWebPush } from '@/lib/web-push'
+import { notificationsKeys } from '@/hooks/use-notifications'
 
 const queryClient = new QueryClient()
+
+// Initialize web push after the app is mounted. The callback invalidates the
+// notifications query so the bell updates immediately when a foreground message arrives.
+initWebPush(() => {
+  queryClient.invalidateQueries({ queryKey: notificationsKeys.all })
+})
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

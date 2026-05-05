@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
     useNotifications,
     useMarkNotificationRead,
+    useMarkAllNotificationsRead,
     useDeleteNotification,
     useClearAllNotifications,
 } from "@/hooks/use-notifications";
@@ -37,6 +38,7 @@ function NotificationItem({
     onDelete: (id: string) => void;
 }) {
     const event = notification.data?.event;
+    const label = event ? EVENT_LABELS[event] : undefined;
 
     return (
         <div
@@ -44,7 +46,6 @@ function NotificationItem({
                 !notification.read ? "bg-primary/5" : ""
             }`}
         >
-            {/* Unread dot */}
             {!notification.read && (
                 <span className="absolute left-1.5 top-4 h-1.5 w-1.5 rounded-full bg-primary" />
             )}
@@ -54,9 +55,9 @@ function NotificationItem({
                     <p className="text-sm font-medium leading-snug line-clamp-1">
                         {notification.title}
                     </p>
-                    {event && EVENT_LABELS[event] && (
+                    {label && (
                         <Badge variant="outline" className="text-[10px] shrink-0 px-1.5 py-0">
-                            {EVENT_LABELS[event]}
+                            {label}
                         </Badge>
                     )}
                 </div>
@@ -95,28 +96,12 @@ function NotificationItem({
 export function NotificationBell() {
     const { data: notifications = [], isLoading } = useNotifications({ limit: 50 });
     const markRead = useMarkNotificationRead();
+    const markAllRead = useMarkAllNotificationsRead();
     const deleteNotif = useDeleteNotification();
     const clearAll = useClearAllNotifications();
 
     const unreadCount = notifications.filter((n) => !n.read).length;
-
-    const handleMarkRead = (id: string) => {
-        markRead.mutate(id);
-    };
-
-    const handleDelete = (id: string) => {
-        deleteNotif.mutate(id);
-    };
-
-    const handleMarkAllRead = () => {
-        notifications
-            .filter((n) => !n.read)
-            .forEach((n) => markRead.mutate(n._id));
-    };
-
-    const handleClearAll = () => {
-        clearAll.mutate();
-    };
+    const unreadIds = notifications.filter((n) => !n.read).map((n) => n._id);
 
     return (
         <Popover>
@@ -131,12 +116,7 @@ export function NotificationBell() {
                 </Button>
             </PopoverTrigger>
 
-            <PopoverContent
-                align="end"
-                sideOffset={8}
-                className="w-[380px] p-0 shadow-lg"
-            >
-                {/* Header */}
+            <PopoverContent align="end" sideOffset={8} className="w-[380px] p-0 shadow-lg">
                 <div className="flex items-center justify-between px-4 py-3 border-b">
                     <div className="flex items-center gap-2">
                         <h3 className="font-semibold text-sm">Notifications</h3>
@@ -150,10 +130,14 @@ export function NotificationBell() {
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 px-2 text-xs gap-1"
-                                onClick={handleMarkAllRead}
-                                disabled={markRead.isPending}
+                                onClick={() => markAllRead.mutate(unreadIds)}
+                                disabled={markAllRead.isPending}
                             >
-                                <CheckCheck className="h-3 w-3" />
+                                {markAllRead.isPending ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                    <CheckCheck className="h-3 w-3" />
+                                )}
                                 Mark all read
                             </Button>
                         )}
@@ -162,7 +146,7 @@ export function NotificationBell() {
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 px-2 text-xs text-destructive hover:text-destructive gap-1"
-                                onClick={handleClearAll}
+                                onClick={() => clearAll.mutate()}
                                 disabled={clearAll.isPending}
                             >
                                 {clearAll.isPending ? (
@@ -176,8 +160,7 @@ export function NotificationBell() {
                     </div>
                 </div>
 
-                {/* Body */}
-                <ScrollArea className="h-[420px]">
+                <ScrollArea className="max-h-[420px]">
                     {isLoading ? (
                         <div className="p-4 space-y-3">
                             {Array.from({ length: 5 }).map((_, i) => (
@@ -191,7 +174,7 @@ export function NotificationBell() {
                             ))}
                         </div>
                     ) : notifications.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-[200px] gap-2 text-muted-foreground">
+                        <div className="flex flex-col items-center justify-center py-12 gap-2 text-muted-foreground">
                             <Bell className="h-8 w-8 opacity-20" />
                             <p className="text-sm">No notifications</p>
                         </div>
@@ -201,8 +184,8 @@ export function NotificationBell() {
                                 <NotificationItem
                                     key={notification._id}
                                     notification={notification}
-                                    onRead={handleMarkRead}
-                                    onDelete={handleDelete}
+                                    onRead={(id) => markRead.mutate(id)}
+                                    onDelete={(id) => deleteNotif.mutate(id)}
                                 />
                             ))}
                         </div>
@@ -212,11 +195,10 @@ export function NotificationBell() {
                 {notifications.length > 0 && (
                     <>
                         <Separator />
-                        <div className="px-4 py-2 text-center">
-                            <p className="text-xs text-muted-foreground">
-                                {notifications.length} notification{notifications.length !== 1 ? "s" : ""} · auto-deleted after 30 days
-                            </p>
-                        </div>
+                        <p className="px-4 py-2 text-center text-xs text-muted-foreground">
+                            {notifications.length} notification{notifications.length !== 1 ? "s" : ""}{" "}
+                            · auto-deleted after 30 days
+                        </p>
                     </>
                 )}
             </PopoverContent>
