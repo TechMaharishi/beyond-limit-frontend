@@ -1,6 +1,6 @@
 import { createAuthClient } from "better-auth/react"
 import { emailOTPClient, adminClient } from "better-auth/client/plugins"
-import { sentinelClient } from "@better-auth/infra/client"
+// import { sentinelClient } from "@better-auth/infra/client"
 
 /**
  * Initialized authentication client using `better-auth`.
@@ -14,6 +14,6 @@ export const authClient = createAuthClient({
     plugins: [
         emailOTPClient(),
         adminClient(),
-        sentinelClient()
+        // sentinelClient()
     ]
 })
