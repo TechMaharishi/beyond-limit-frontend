@@ -152,6 +152,7 @@ export default function AssignShortsPage() {
     const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
     const [selectedShortIds, setSelectedShortIds] = useState<string[]>([]);
     const [shortSearch, setShortSearch] = useState("");
+    const [unassigningId, setUnassigningId] = useState<string | null>(null);
 
     // Profile data — only fetched for Individual Learner (user) rows
     const { data: userProfiles = [], isLoading: isProfilesLoading } = useUserProfilesForAssignment(
@@ -290,6 +291,7 @@ export default function AssignShortsPage() {
     const handleUnassign = async (shortVideoId: string) => {
         if (!selectedUser) return;
 
+        setUnassigningId(shortVideoId);
         try {
             await unassignMutation.mutateAsync({
                 userId: selectedUser.id,
@@ -303,6 +305,8 @@ export default function AssignShortsPage() {
                 msg = error.response?.data?.message || msg;
             }
             toast.error(msg);
+        } finally {
+            setUnassigningId(null);
         }
     };
 
@@ -838,9 +842,9 @@ export default function AssignShortsPage() {
                                                         size="icon"
                                                         className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0"
                                                         onClick={() => handleUnassign(assignment.short._id)}
-                                                        disabled={unassignMutation.isPending}
+                                                        disabled={unassigningId === assignment.short._id}
                                                     >
-                                                        {unassignMutation.isPending ? (
+                                                        {unassigningId === assignment.short._id ? (
                                                             <Loader2 className="h-4 w-4 animate-spin" />
                                                         ) : (
                                                             <Trash2 className="h-4 w-4" />

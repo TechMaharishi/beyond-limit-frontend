@@ -155,6 +155,7 @@ export default function AssignCoursePage() {
     const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([]);
     const [courseSearch, setCourseSearch] = useState("");
     const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+    const [unassigningId, setUnassigningId] = useState<string | null>(null);
 
     const isUserTab = activeTab === "user";
     const requiresProfile = isUserTab;
@@ -289,6 +290,7 @@ export default function AssignCoursePage() {
     const handleUnassign = async (courseId: string) => {
         if (!selectedUser) return;
 
+        setUnassigningId(courseId);
         try {
             await unassignMutation.mutateAsync({
                 userId: selectedUser.id,
@@ -305,6 +307,8 @@ export default function AssignCoursePage() {
                     ? (error as { response?: { data?: { message?: string } } }).response!.data!.message!
                     : "Failed to unassign course";
             toast.error(message);
+        } finally {
+            setUnassigningId(null);
         }
     };
 
@@ -835,9 +839,9 @@ export default function AssignCoursePage() {
                                                             size="icon"
                                                             className="text-destructive hover:text-destructive hover:bg-destructive/10"
                                                             onClick={() => handleUnassign(assignment.course._id)}
-                                                            disabled={unassignMutation.isPending}
+                                                            disabled={unassigningId === assignment.course._id}
                                                         >
-                                                            {unassignMutation.isPending ? (
+                                                            {unassigningId === assignment.course._id ? (
                                                                 <Loader2 className="h-4 w-4 animate-spin" />
                                                             ) : (
                                                                 <Trash2 className="h-4 w-4" />
