@@ -23,13 +23,11 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import {
     Activity,
     BookOpen,
     GraduationCap,
-    Users,
     ShieldAlert,
     Timer,
     Play,
@@ -51,7 +49,6 @@ import {
     useContentPopularity,
 } from "@/hooks/use-kpi";
 import {
-    useAuditLogs,
     useAuditSummary,
     useAuditByCategory,
 } from "@/hooks/use-audit";
