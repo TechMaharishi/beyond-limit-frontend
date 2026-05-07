@@ -13,6 +13,9 @@ import { dashClient } from "@better-auth/infra/client"
  */
 export const authClient = createAuthClient({
     baseURL: import.meta.env.VITE_BASE_URL,
+    fetchOptions: {
+        credentials: "include",
+    },
     plugins: [
         emailOTPClient(),
         adminClient(),
