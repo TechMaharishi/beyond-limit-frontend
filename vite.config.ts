@@ -33,7 +33,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "https://blpt-backend.onrender.com",
+        target: "https://beyond-limit-backend-pp36.onrender.com",
         changeOrigin: true,
         secure: false,
         cookieDomainRewrite: "localhost",
