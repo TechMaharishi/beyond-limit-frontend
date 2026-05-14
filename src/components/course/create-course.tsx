@@ -1576,7 +1576,8 @@ export default function CourseCreation() {
                             <div className="space-y-2">
                               <Label className="text-xs">Video</Label>
                               {lesson.videos.length > 0 ? (
-                                <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
+                                <div className="space-y-2">
+                                  <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
                                     <button
                                       type="button"
                                       className="relative w-24 h-14 rounded overflow-hidden flex-shrink-0 bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
@@ -1624,6 +1625,25 @@ export default function CourseCreation() {
                                       <Trash2 className="w-4 h-4" />
                                     </Button>
                                   </div>
+                                  {activeCourseId && lesson.videos[0]?.cloudinaryId && (
+                                    <SubtitleStatusCard
+                                      variant="slim"
+                                      status={lesson.videos[0].subtitle_status}
+                                      failureReason={lesson.videos[0].subtitle_failure_reason}
+                                      retryCount={lesson.videos[0].subtitle_retry_count}
+                                      lastAttempt={lesson.videos[0].last_subtitle_attempt}
+                                      retryable={lesson.videos[0].retryable}
+                                      hasSubtitleUrl={lesson.videos[0].subtitles?.some((s) => s.format === 'vtt')}
+                                      isRetrying={retryCourseSubtitlesMutation.isPending}
+                                      onRetry={() =>
+                                        handleRetryCourseSubtitles(
+                                          activeCourseId,
+                                          lesson.videos[0].cloudinaryId!
+                                        )
+                                      }
+                                    />
+                                  )}
+                                </div>
                               ) : uploadingLessonIndex === lessonIndex ? (
                                 <div className="border-2 border-dashed rounded-lg p-6 text-center border-primary/50">
                                   <Loader2 className="w-8 h-8 mx-auto text-primary mb-2 animate-spin" />
@@ -2040,7 +2060,7 @@ export default function CourseCreation() {
                     <Badge
                       key={tag._id}
                       variant={isSelected ? 'default' : 'outline'}
-                      className="cursor-pointer px-4 py-2 text-sm transition-all duration-200 hover:bg-muted"
+                      className={`cursor-pointer px-4 py-2 text-sm transition-all duration-200 ${isSelected ? 'hover:bg-primary/90' : 'hover:bg-muted'}`}
                       onClick={() => toggleCategory(tag.slug)}
                     >
                       {tag.name}
@@ -2337,6 +2357,7 @@ export default function CourseCreation() {
                   key={previewVideo?.video.cloudinaryId || previewVideo?.video.cloudinaryUrl || 'video'}
                   className="h-full w-full"
                   controls
+                  controlsList="nodownload"
                   autoPlay
                   crossOrigin="anonymous"
                 >
