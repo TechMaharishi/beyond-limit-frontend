@@ -10,6 +10,7 @@ import { Suspense } from "react"
 import { PageLoader } from "@/components/page-loader"
 import { ModeToggle } from "@/components/mode-toggle"
 import { NotificationBell } from "@/components/notifications/notification-bell"
+import { NotificationToastContainer } from "@/components/notifications/notification-toast-queue"
 import { useNotificationToasts } from "@/hooks/use-notifications"
 
 /**
@@ -27,6 +28,7 @@ export function AppShell() {
     useNotificationToasts();
 
     return (
+        <>
         <SidebarProvider>
             <AppSidebar />
             <SidebarInset>
@@ -36,7 +38,7 @@ export function AppShell() {
                     <div className="flex items-center gap-2">
                         <h1 className="text-lg font-semibold">Beyond Limits Learning Hub Admin Panel</h1>
                     </div>
-                    <div className="ml-auto flex items-center gap-1">
+                    <div className="ml-auto flex items-center gap-3">
                         <NotificationBell />
                         <ModeToggle />
                     </div>
@@ -52,5 +54,7 @@ export function AppShell() {
                 </div>
             </SidebarInset>
         </SidebarProvider>
+        <NotificationToastContainer />
+        </>
     )
 }

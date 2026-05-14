@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import { toast } from "sonner";
+import { enqueueNotificationToast } from "@/components/notifications/notification-toast-queue";
 import {
     fetchNotifications,
     markNotificationRead,
@@ -108,43 +108,46 @@ export function useClearAllNotifications() {
     });
 }
 
-/**
- * Watches the polling feed and fires a Sonner toast for each notification
- * that arrives after the initial load. Must be mounted once at the app shell level.
- */
-const MAX_INITIAL_TOASTS = 3;
+// Max unread toasts shown on login to avoid overwhelming the user.
+const MAX_INITIAL_TOASTS = 5;
+// Delay between each staggered toast (ms).
+const STAGGER_MS = 700;
 
 /**
- * Watches the polling feed and fires a Sonner toast for each notification
- * that arrives after the initial load. Must be mounted once at the app shell level.
+ * Watches the polling feed and drip-feeds notification toasts from the bottom-left.
+ * - On first load: staggers unread notifications one at a time (max 5).
+ * - During session: immediately shows any new notification that arrives via polling.
+ * Mount once at the app shell level.
  */
 export function useNotificationToasts() {
     const { data: notifications = [] } = useNotifications({ limit: 50 });
     const seenIds = useRef<Set<string> | null>(null);
+    const timers  = useRef<ReturnType<typeof setTimeout>[]>([]);
 
     useEffect(() => {
         if (notifications.length === 0) return;
 
         if (seenIds.current === null) {
-            // Seed seen set and toast any existing unread notifications (capped to avoid spam).
+            // First load — seed seen set and stagger unread toasts.
             seenIds.current = new Set(notifications.map((n) => n._id));
-            const unread = notifications.filter((n) => !n.read);
-            const toShow = unread.slice(0, MAX_INITIAL_TOASTS);
-            toShow.forEach((n) => toast(n.title, { description: n.body, duration: 6000 }));
-            if (unread.length > MAX_INITIAL_TOASTS) {
-                toast(`+${unread.length - MAX_INITIAL_TOASTS} more unread notifications`, {
-                    duration: 5000,
-                });
-            }
+
+            const unread = notifications.filter((n) => !n.read).slice(0, MAX_INITIAL_TOASTS);
+            unread.forEach((n, i) => {
+                const t = setTimeout(() => enqueueNotificationToast(n), i * STAGGER_MS);
+                timers.current.push(t);
+            });
             return;
         }
 
-        // Any ID not yet in the set arrived during this session — show a toast.
+        // During session — any unseen ID is a real-time arrival, show immediately.
         for (const n of notifications) {
             if (!seenIds.current.has(n._id)) {
                 seenIds.current.add(n._id);
-                toast(n.title, { description: n.body, duration: 6000 });
+                enqueueNotificationToast(n);
             }
         }
     }, [notifications]);
+
+    // Clean up pending timers on unmount.
+    useEffect(() => () => timers.current.forEach(clearTimeout), []);
 }

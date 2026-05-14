@@ -174,23 +174,23 @@ const createUser = async (payload: CreateUserPayload) => {
 };
 
 const fetchAdminUserProfiles = async (userId: string): Promise<Profile[]> => {
-  const response = await apiClient.get("/admin/user-profiles", { params: { userId } });
+  const response = await apiClient.get("/admin/profiles", { params: { userId } });
   return response.data?.data ?? [];
 };
 
 const createAdminProfile = async (payload: { userId: string; name: string; avatar?: string }) => {
-  const response = await apiClient.post("/admin/user-profiles", payload);
+  const response = await apiClient.post("/admin/profiles", payload);
   return response.data;
 };
 
 const updateAdminProfile = async (payload: { profileId: string; name?: string; avatar?: string }) => {
   const { profileId, ...data } = payload;
-  const response = await apiClient.patch(`/admin/user-profiles/${profileId}`, data);
+  const response = await apiClient.patch(`/admin/profiles/${profileId}`, data);
   return response.data;
 };
 
 const deleteAdminProfile = async (profileId: string) => {
-  const response = await apiClient.delete(`/admin/user-profiles/${profileId}`);
+  const response = await apiClient.delete(`/admin/profiles/${profileId}`);
   return response.data;
 };
 
@@ -979,7 +979,7 @@ export default function AllUsersPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="newRole">Role <span className="text-destructive">*</span></Label>
-                <Select value={newUser.role} onValueChange={(val) => { setNewUser({ ...newUser, role: val as CreateUserPayload["role"] }); if (formErrors.role) setFormErrors({ ...formErrors, role: "" }); }}>
+                <Select value={newUser.role} onValueChange={(val) => { const role = val as CreateUserPayload["role"]; const accountType = role !== "user" ? "master" : newUser.accountType; setNewUser({ ...newUser, role, accountType }); if (formErrors.role) setFormErrors({ ...formErrors, role: "" }); if (formErrors.accountType) setFormErrors({ ...formErrors, accountType: "" }); }}>
                   <SelectTrigger id="newRole"><SelectValue placeholder="Select role" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="admin">Super Admin</SelectItem>
@@ -992,7 +992,11 @@ export default function AllUsersPage() {
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="newAccountType">Account Type <span className="text-destructive">*</span></Label>
-                <Select value={newUser.accountType} onValueChange={(val) => { setNewUser({ ...newUser, accountType: val }); if (formErrors.accountType) setFormErrors({ ...formErrors, accountType: "" }); }}>
+                <Select
+                  value={newUser.accountType}
+                  onValueChange={(val) => { setNewUser({ ...newUser, accountType: val }); if (formErrors.accountType) setFormErrors({ ...formErrors, accountType: "" }); }}
+                  disabled={newUser.role !== "user" && newUser.role !== ""}
+                >
                   <SelectTrigger id="newAccountType"><SelectValue placeholder="Select account type" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="free">Free</SelectItem>
@@ -1000,6 +1004,9 @@ export default function AllUsersPage() {
                     <SelectItem value="master">Master</SelectItem>
                   </SelectContent>
                 </Select>
+                {newUser.role !== "user" && newUser.role !== "" && (
+                  <p className="text-xs text-muted-foreground">Auto-set to Master for this role.</p>
+                )}
                 {formErrors.accountType && <p className="text-sm text-destructive">{formErrors.accountType}</p>}
               </div>
               <div className="col-span-2 flex flex-col gap-2">
