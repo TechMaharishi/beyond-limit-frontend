@@ -426,6 +426,60 @@ export async function changeStatus(courseId: string, status: CourseStatus): Prom
     return response.data.data;
 }
 
+// ─── V1 signed upload flow ────────────────────────────────────────────────────
+
+export interface CourseSignedUploadUrlResponse {
+    uploadUrl: string;
+    fields: {
+        api_key: string;
+        timestamp: number;
+        signature: string;
+        public_id: string;
+        notification_url: string;
+        resource_type: string;
+    };
+}
+
+export interface CourseVideoStatusResponse {
+    courseId: string;
+    chapterIndex: number;
+    lessonIndex: number;
+    videoReady: boolean;
+    cloudinaryId: string;
+    durationSeconds: number;
+    subtitleStatus?: string;
+}
+
+/**
+ * Phase 1 — get a backend-signed upload URL for a specific lesson video slot.
+ * POST /v1/courses/:courseId/chapters/:chapterIndex/lessons/:lessonIndex/signed-upload-url
+ */
+export async function getCourseSignedUploadUrl(
+    courseId: string,
+    chapterIndex: number,
+    lessonIndex: number
+): Promise<CourseSignedUploadUrlResponse> {
+    const response = await apiClient.post<ApiResponse<CourseSignedUploadUrlResponse>>(
+        `/v1/courses/${courseId}/chapters/${chapterIndex}/lessons/${lessonIndex}/signed-upload-url`
+    );
+    return response.data.data;
+}
+
+/**
+ * Poll — check if the Cloudinary webhook has finished updating the lesson video.
+ * GET /v1/courses/:courseId/chapters/:chapterIndex/lessons/:lessonIndex/video-status
+ */
+export async function getCourseVideoStatus(
+    courseId: string,
+    chapterIndex: number,
+    lessonIndex: number
+): Promise<CourseVideoStatusResponse> {
+    const response = await apiClient.get<ApiResponse<CourseVideoStatusResponse>>(
+        `/v1/courses/${courseId}/chapters/${chapterIndex}/lessons/${lessonIndex}/video-status`
+    );
+    return response.data.data;
+}
+
 /**
  * Triggers subtitle regeneration for a specific course video.
  * @param courseId - The course's database ID.

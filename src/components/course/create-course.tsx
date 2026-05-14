@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   useCreateCourse,
   useUpdateCourse,
@@ -15,12 +16,14 @@ import {
   useAddQuiz,
   useUpdateQuiz,
   useDeleteQuiz,
-  useUpdateLessonVideo,
   useDeleteLessonVideo,
   useRetryCourseSubtitles,
+  useGetCourseSignedUploadUrl,
+  usePollCourseVideoStatus,
+  courseKeys,
 } from '@/hooks/use-course';
 import { SubtitleStatusCard } from '@/components/shorts/subtitle-status-card';
-import { getMp4PlaybackUrl, uploadVideo } from '@/services/cloudinary.service';
+import { getMp4PlaybackUrl } from '@/services/cloudinary.service';
 import { toast } from 'sonner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -67,6 +70,7 @@ import {
   Play,
   Clock,
   Loader2,
+  ExternalLink,
 } from 'lucide-react';
 
 /** Schema for video assets. */
@@ -267,6 +271,7 @@ export default function CourseCreation() {
   const lessonSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const courseDataRef = useRef(courseData);
 
+  const queryClient = useQueryClient();
   const { data: tags = [], isLoading: isLoadingTags } = useTags();
   const { data: existingCourse } = useCourse(activeCourseId);
 
@@ -282,9 +287,32 @@ export default function CourseCreation() {
   const addQuizMutation = useAddQuiz();
   const updateQuizMutation = useUpdateQuiz();
   const deleteQuizMutation = useDeleteQuiz();
-  const updateLessonVideoMutation = useUpdateLessonVideo();
   const deleteLessonVideoMutation = useDeleteLessonVideo();
   const retryCourseSubtitlesMutation = useRetryCourseSubtitles();
+  const getSignedUploadUrlMutation = useGetCourseSignedUploadUrl();
+
+  // V1 polling state: track which lesson slot is waiting for the webhook
+  const [pollingSlot, setPollingSlot] = useState<{ chapterIndex: number; lessonIndex: number } | null>(null);
+
+  // Poll until the Cloudinary webhook marks the video as ready
+  const { data: pollVideoStatus } = usePollCourseVideoStatus(
+    activeCourseId ?? undefined,
+    pollingSlot?.chapterIndex ?? 0,
+    pollingSlot?.lessonIndex ?? 0,
+    pollingSlot !== null
+  );
+
+  useEffect(() => {
+    if (!pollingSlot || !pollVideoStatus?.videoReady) return;
+    // Webhook fired — refresh course data and clear the uploading state
+    setPollingSlot(null);
+    setUploadingLessonIndex(null);
+    setLessonUploadProgress(0);
+    // Sync latest lesson data (cloudinaryId, durationSeconds) from server
+    queryClient.invalidateQueries({ queryKey: courseKeys.detail(activeCourseId!) });
+    toast.success('Video processed successfully!');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pollVideoStatus?.videoReady, pollingSlot]);
 
   const handleRetryCourseSubtitles = async (courseIdArg: string, cloudinaryId: string) => {
     try {
@@ -834,6 +862,11 @@ export default function CourseCreation() {
       return;
     }
 
+    if (file.size > 2 * 1024 * 1024 * 1024) {
+      toast.error('File size exceeds the 2 GB limit');
+      return;
+    }
+
     const targetCourseId = await ensureCourseExists();
     if (!targetCourseId) return;
 
@@ -841,49 +874,41 @@ export default function CourseCreation() {
     setLessonUploadProgress(0);
 
     try {
-      // First upload to Cloudinary
-      const result = await uploadVideo(file, (progress) => {
-        setLessonUploadProgress(progress);
-      });
-
-      // Then sync with backend via dedicated video endpoint
-      await updateLessonVideoMutation.mutateAsync({
+      // Phase 1 — get backend-signed upload credentials
+      const signedData = await getSignedUploadUrlMutation.mutateAsync({
         courseId: targetCourseId,
         chapterIndex: activeChapter,
         lessonIndex,
-        videoData: {
-          cloudinaryUrl: result.cloudinaryUrl,
-          cloudinaryId: result.cloudinaryId,
-          durationSeconds: result.durationSeconds,
-          thumbnailUrl: result.thumbnailUrl,
-        },
       });
 
-      // Update local state
-      const updatedChapters = [...courseData.chapters];
-      updatedChapters[activeChapter].lessons[lessonIndex].videos = [
-        {
-          cloudinaryUrl: result.cloudinaryUrl,
-          cloudinaryId: result.cloudinaryId,
-          durationSeconds: result.durationSeconds,
-          thumbnailUrl: result.thumbnailUrl,
-        },
-      ];
-      setCourseData(prev => ({ ...prev, chapters: updatedChapters }));
+      // Phase 2 — upload directly from the browser to Cloudinary (XHR for progress)
+      const formPayload = new FormData();
+      formPayload.append('file', file);
+      Object.entries(signedData.fields).forEach(([key, val]) => {
+        formPayload.append(key, String(val));
+      });
 
-      // Auto-save course draft after video upload to persist any pending changes
-      try {
-        await handleSaveCourse(false, false);
-      } catch (saveError) {
-        console.error('Auto-save after video upload failed:', saveError);
-        // Video is saved, just notify user about auto-save
-      }
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', signedData.uploadUrl, true);
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) setLessonUploadProgress(Math.round((e.loaded / e.total) * 100));
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error(`Cloudinary upload failed: ${xhr.statusText}`));
+        };
+        xhr.onerror = () => reject(new Error('Network error during upload'));
+        xhr.send(formPayload);
+      });
 
-      toast.success('Video uploaded successfully!');
+      // Phase 3 — start polling; webhook will update the DB record
+      setPollingSlot({ chapterIndex: activeChapter, lessonIndex });
+      toast.info('Video uploaded — waiting for processing…');
+      // uploadingLessonIndex stays set until polling resolves (the useEffect above clears it)
     } catch (error) {
       console.error('Video upload error:', error);
       toast.error('Failed to upload video. Please try again.');
-    } finally {
       setUploadingLessonIndex(null);
       setLessonUploadProgress(0);
     }
@@ -1602,11 +1627,23 @@ export default function CourseCreation() {
                               ) : uploadingLessonIndex === lessonIndex ? (
                                 <div className="border-2 border-dashed rounded-lg p-6 text-center border-primary/50">
                                   <Loader2 className="w-8 h-8 mx-auto text-primary mb-2 animate-spin" />
-                                  <p className="text-sm font-medium">Uploading video...</p>
-                                  <p className="text-xs text-muted-foreground mb-2">
-                                    {lessonUploadProgress}% complete
-                                  </p>
-                                  <Progress value={lessonUploadProgress} className="h-1" />
+                                  {pollingSlot?.chapterIndex === activeChapter && pollingSlot?.lessonIndex === lessonIndex ? (
+                                    <>
+                                      <p className="text-sm font-medium">Processing video…</p>
+                                      <p className="text-xs text-muted-foreground mb-2">
+                                        Cloudinary is transcoding. This may take a moment.
+                                      </p>
+                                      <Progress value={undefined} className="h-1 animate-pulse" />
+                                    </>
+                                  ) : (
+                                    <>
+                                      <p className="text-sm font-medium">Uploading video…</p>
+                                      <p className="text-xs text-muted-foreground mb-2">
+                                        {lessonUploadProgress}% complete
+                                      </p>
+                                      <Progress value={lessonUploadProgress} className="h-1" />
+                                    </>
+                                  )}
                                 </div>
                               ) : (
                                 <label className="border-2 border-dashed rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer block">
@@ -1933,19 +1970,27 @@ export default function CourseCreation() {
                       key={index}
                       className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors group"
                     >
-                      <div className="p-2 rounded-lg bg-background">
+                      <div className="p-2 rounded-lg bg-background shrink-0">
                         <FileText className="w-5 h-5 text-primary" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">{resource.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatFileSize(resource.sizeBytes)}
-                        </p>
+                        <a
+                          href={resource.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-primary hover:underline truncate"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <ExternalLink className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{resource.url}</span>
+                        </a>
+                        <p className="text-xs text-muted-foreground">{formatFileSize(resource.sizeBytes)}</p>
                       </div>
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive"
+                        className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive shrink-0"
                         onClick={() => deleteResource(index)}
                         disabled={isUploadingResources}
                       >

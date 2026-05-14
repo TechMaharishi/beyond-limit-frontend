@@ -24,6 +24,8 @@ import {
     changeStatus,
     deleteCloudinaryVideo,
     retryCourseSubtitles,
+    getCourseSignedUploadUrl,
+    getCourseVideoStatus,
     type Tag,
     type Course,
     type AccessLevel,
@@ -425,5 +427,41 @@ export function useRetryCourseSubtitles() {
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: courseKeys.detail(variables.courseId) });
         },
+    });
+}
+
+// ─── V1 signed upload flow ────────────────────────────────────────────────────
+
+/** Phase 1 — request a backend-signed Cloudinary upload URL for a lesson video slot. */
+export function useGetCourseSignedUploadUrl() {
+    return useMutation({
+        mutationFn: ({
+            courseId,
+            chapterIndex,
+            lessonIndex,
+        }: {
+            courseId: string;
+            chapterIndex: number;
+            lessonIndex: number;
+        }) => getCourseSignedUploadUrl(courseId, chapterIndex, lessonIndex),
+    });
+}
+
+/**
+ * Polling — check if the Cloudinary webhook has updated the lesson video.
+ * Pass enabled=false to pause polling.
+ */
+export function usePollCourseVideoStatus(
+    courseId: string | undefined,
+    chapterIndex: number,
+    lessonIndex: number,
+    enabled: boolean
+) {
+    return useQuery({
+        queryKey: ['course-video-status', courseId, chapterIndex, lessonIndex],
+        queryFn: () => getCourseVideoStatus(courseId!, chapterIndex, lessonIndex),
+        enabled: !!courseId && enabled,
+        refetchInterval: enabled ? 3000 : false,
+        staleTime: 0,
     });
 }
