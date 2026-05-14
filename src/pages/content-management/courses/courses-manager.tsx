@@ -348,16 +348,7 @@ export function CoursesManager({
                   <TableHead className="w-[15%] bg-background py-2">Tags</TableHead>
                   <TableHead className="w-[10%] bg-background py-2">Duration</TableHead>
                   <TableHead className="w-[15%] bg-background py-2">Created By</TableHead>
-                  <TableHead 
-                    className="w-[10%] bg-background py-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => handleSort("createdAt")}
-                  >
-                    <div className="flex items-center gap-1">
-                      Created At
-                      {sortBy === "createdAt" && <ArrowUpDown className="h-3 w-3" />}
-                    </div>
-                  </TableHead>
-                  <TableHead 
+                  <TableHead
                     className="w-[10%] bg-background py-2 cursor-pointer hover:bg-muted/50 transition-colors"
                     onClick={() => handleSort("updatedAt")}
                   >
@@ -453,9 +444,6 @@ export function CoursesManager({
                                 {course.createdBy?.email}
                               </span>
                             </div>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground py-2">
-                            {formatRelativeTime(course.createdAt)}
                           </TableCell>
                           <TableCell className="text-muted-foreground py-2">
                             {formatRelativeTime(course.updatedAt)}
