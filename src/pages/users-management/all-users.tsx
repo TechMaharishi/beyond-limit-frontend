@@ -995,7 +995,7 @@ export default function AllUsersPage() {
                 <Select
                   value={newUser.accountType}
                   onValueChange={(val) => { setNewUser({ ...newUser, accountType: val }); if (formErrors.accountType) setFormErrors({ ...formErrors, accountType: "" }); }}
-                  disabled={newUser.role !== "user" && newUser.role !== ""}
+                  disabled={newUser.role !== "user"}
                 >
                   <SelectTrigger id="newAccountType"><SelectValue placeholder="Select account type" /></SelectTrigger>
                   <SelectContent>
@@ -1004,7 +1004,7 @@ export default function AllUsersPage() {
                     <SelectItem value="master">Master</SelectItem>
                   </SelectContent>
                 </Select>
-                {newUser.role !== "user" && newUser.role !== "" && (
+                {newUser.role !== "user" && (
                   <p className="text-xs text-muted-foreground">Auto-set to Master for this role.</p>
                 )}
                 {formErrors.accountType && <p className="text-sm text-destructive">{formErrors.accountType}</p>}

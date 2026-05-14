@@ -13,6 +13,7 @@ import {
     useChangeShortStatus,
     useAddShortResource,
     useRemoveShortResource,
+    useUploadShortThumbnail,
 } from '@/hooks/use-shorts';
 import { getMp4PlaybackUrl } from '@/services/cloudinary.service';
 import type { AccessLevel, Visibility } from '@/services/shorts.service';
@@ -68,6 +69,7 @@ import {
     Trash2,
     Cloud,
     CloudOff,
+    ImageIcon,
 } from 'lucide-react';
 
 /** State model for the short video form. */
@@ -129,6 +131,15 @@ export default function CreateShort() {
     const [isRemoveVideoDialogOpen, setIsRemoveVideoDialogOpen] = useState(false);
 
     const videoInputRef = useRef<HTMLInputElement | null>(null);
+
+    // ─── Thumbnail state ───────────────────────────────────────────────────────
+    const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
+    const [thumbnailPreview, setThumbnailPreview] = useState<string>('');
+    const [isUploadingThumbnail, setIsUploadingThumbnail] = useState(false);
+    const thumbnailInputRef = useRef<HTMLInputElement | null>(null);
+    // Holds a file picked before the shell exists — auto-uploaded once shell is created
+    const pendingThumbnailRef = useRef<File | null>(null);
+    const uploadThumbnailMutation = useUploadShortThumbnail();
 
     const { data: tags = [], isLoading: isLoadingTags } = useTags();
     const { data: existingShort, refetch: refetchShort } = useShort(currentShortId);
@@ -233,6 +244,12 @@ export default function CreateShort() {
                     visibility: data.visibility,
                 });
                 setCurrentShortId(shell._id);
+                // Upload any thumbnail that was picked before the shell existed
+                if (pendingThumbnailRef.current) {
+                    const pending = pendingThumbnailRef.current;
+                    pendingThumbnailRef.current = null;
+                    doUploadThumbnail(pending, shell._id);
+                }
             } else {
                 // Update existing shell/draft metadata
                 await updateShortMutation.mutateAsync({
@@ -397,6 +414,11 @@ export default function CreateShort() {
                 });
                 shellId = shell._id;
                 setCurrentShortId(shellId);
+                if (pendingThumbnailRef.current) {
+                    const pending = pendingThumbnailRef.current;
+                    pendingThumbnailRef.current = null;
+                    doUploadThumbnail(pending, shellId);
+                }
             }
 
             // Phase 2 — get signed upload params from our backend
@@ -720,6 +742,47 @@ export default function CreateShort() {
 
     const isProcessing = isSaving || isSubmitting || isPublishing || isUploading || isPolling || isRejecting || autoSaveStatus === 'saving';
 
+    /** Pick a thumbnail file — shows preview; uploads immediately if shell exists, else queues it. */
+    const handleThumbnailPick = (file: File) => {
+        if (!file.type.startsWith('image/')) {
+            toast.error('Please select an image file');
+            return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            toast.error('Thumbnail must be under 5 MB');
+            return;
+        }
+        setThumbnailFile(file);
+        const url = URL.createObjectURL(file);
+        setThumbnailPreview(url);
+
+        if (currentShortIdRef.current) {
+            doUploadThumbnail(file, currentShortIdRef.current);
+        } else {
+            // Queue for after shell creation
+            pendingThumbnailRef.current = file;
+        }
+    };
+
+    const doUploadThumbnail = async (file: File, shellId: string) => {
+        setIsUploadingThumbnail(true);
+        try {
+            await uploadThumbnailMutation.mutateAsync({ shortId: shellId, file });
+            toast.success('Thumbnail uploaded!');
+        } catch (err: any) {
+            toast.error(err?.response?.data?.message || 'Failed to upload thumbnail');
+        } finally {
+            setIsUploadingThumbnail(false);
+        }
+    };
+
+    const handleClearThumbnail = () => {
+        setThumbnailFile(null);
+        setThumbnailPreview('');
+        pendingThumbnailRef.current = null;
+        if (thumbnailInputRef.current) thumbnailInputRef.current.value = '';
+    };
+
     /** Handle subtitle retry */
     const handleRetrySubtitles = () => {
         if (!currentShortId) return;
@@ -847,6 +910,110 @@ export default function CreateShort() {
                                     <span className="text-muted-foreground">{formData.description.length}</span>
                                 </div>
                             </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* Thumbnail Card */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <ImageIcon className="h-4 w-4" />
+                                Thumbnail
+                            </CardTitle>
+                            <CardDescription>
+                                Upload a cover image for your short video (max 5 MB)
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            {/* 16:9 preview / drop zone */}
+                            <div
+                                className="relative w-full overflow-hidden rounded-lg border-2 border-dashed border-muted-foreground/25 bg-muted/30 cursor-pointer hover:border-primary/50 transition-colors"
+                                style={{ aspectRatio: '16/9' }}
+                                onClick={() => thumbnailInputRef.current?.click()}
+                                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                                onDrop={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const file = e.dataTransfer.files[0];
+                                    if (file) handleThumbnailPick(file);
+                                }}
+                            >
+                                {thumbnailPreview || formData.thumbnailUrl ? (
+                                    <>
+                                        <img
+                                            src={thumbnailPreview || formData.thumbnailUrl}
+                                            alt="Thumbnail preview"
+                                            className="w-full h-full object-cover"
+                                        />
+                                        {isUploadingThumbnail && (
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-lg">
+                                                <Loader2 className="h-8 w-8 text-white animate-spin" />
+                                            </div>
+                                        )}
+                                    </>
+                                ) : (
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4">
+                                        <div className="p-3 rounded-full bg-muted">
+                                            <ImageIcon className="h-7 w-7 text-muted-foreground" />
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="text-sm font-medium">Click or drag to upload thumbnail</p>
+                                            <p className="text-xs text-muted-foreground mt-0.5">JPG, PNG, WebP — 16:9 recommended</p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            <input
+                                ref={thumbnailInputRef}
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleThumbnailPick(file);
+                                }}
+                            />
+
+                            {/* Actions row — only shown when there's something to act on */}
+                            {(thumbnailFile || formData.thumbnailUrl) && (
+                                <div className="mt-3 flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                        <ImageIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                        <span className="text-xs text-muted-foreground truncate">
+                                            {thumbnailFile
+                                                ? thumbnailFile.name
+                                                : 'Current thumbnail'}
+                                        </span>
+                                        {!currentShortId && thumbnailFile && (
+                                            <span className="text-xs text-amber-600 dark:text-amber-400 shrink-0">
+                                                · uploads on save
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7 text-xs px-2"
+                                            onClick={() => thumbnailInputRef.current?.click()}
+                                            disabled={isUploadingThumbnail}
+                                        >
+                                            Change
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-7 w-7 text-destructive hover:text-destructive"
+                                            onClick={handleClearThumbnail}
+                                            disabled={isUploadingThumbnail}
+                                        >
+                                            <X className="h-3.5 w-3.5" />
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
 
@@ -1168,126 +1335,126 @@ export default function CreateShort() {
                                 </p>
                             ) : null}
 
-                            {/* Add resource — locked until a shell exists */}
-                            {!currentShortId ? (
-                                <div className="rounded-lg border border-dashed border-muted-foreground/30 p-4 text-center">
-                                    <Paperclip className="h-5 w-5 mx-auto mb-1 text-muted-foreground/50" />
-                                    <p className="text-xs text-muted-foreground">
-                                        Save a draft first to attach resources
+                            {/* Add resource */}
+                            <Tabs
+                                value={resourceTab}
+                                onValueChange={(v) => setResourceTab(v as 'file' | 'url')}
+                            >
+                                <TabsList className="w-full">
+                                    <TabsTrigger value="file" className="flex-1 gap-1.5">
+                                        <FileText className="h-3.5 w-3.5" />
+                                        Upload File
+                                    </TabsTrigger>
+                                    <TabsTrigger value="url" className="flex-1 gap-1.5">
+                                        <Link className="h-3.5 w-3.5" />
+                                        Add Link
+                                    </TabsTrigger>
+                                </TabsList>
+
+                                {!currentShortId && (
+                                    <p className="text-xs text-muted-foreground text-center mt-2">
+                                        Resources will be available once your draft is saved.
                                     </p>
-                                </div>
-                            ) : (
-                                <Tabs
-                                    value={resourceTab}
-                                    onValueChange={(v) => setResourceTab(v as 'file' | 'url')}
-                                >
-                                    <TabsList className="w-full">
-                                        <TabsTrigger value="file" className="flex-1 gap-1.5">
-                                            <FileText className="h-3.5 w-3.5" />
-                                            Upload File
-                                        </TabsTrigger>
-                                        <TabsTrigger value="url" className="flex-1 gap-1.5">
-                                            <Link className="h-3.5 w-3.5" />
-                                            Add Link
-                                        </TabsTrigger>
-                                    </TabsList>
+                                )}
 
-                                    {/* ─ File upload tab ─────────────────── */}
-                                    <TabsContent value="file" className="flex flex-col gap-3 mt-3">
-                                        <div
-                                            className="flex flex-col items-center gap-3 rounded-lg border-2 border-dashed border-muted-foreground/25 p-4 cursor-pointer hover:border-primary/50 transition-colors"
-                                            onClick={() => resourceFileRef.current?.click()}
-                                        >
-                                            <Upload className="h-5 w-5 text-muted-foreground" />
-                                            {resourceFile ? (
-                                                <div className="text-center">
-                                                    <p className="text-sm font-medium truncate max-w-[200px]">{resourceFile.name}</p>
-                                                    <p className="text-xs text-muted-foreground">
-                                                        {(resourceFile.size / 1024).toFixed(1)} KB
-                                                    </p>
-                                                </div>
-                                            ) : (
-                                                <p className="text-xs text-muted-foreground text-center">
-                                                    Click to select a PDF, DOC, image, or other file
+                                {/* ─ File upload tab ─────────────────── */}
+                                <TabsContent value="file" className="flex flex-col gap-3 mt-3">
+                                    <div
+                                        className={`flex flex-col items-center gap-3 rounded-lg border-2 border-dashed border-muted-foreground/25 p-4 transition-colors ${currentShortId ? 'cursor-pointer hover:border-primary/50' : 'opacity-50 cursor-not-allowed'}`}
+                                        onClick={() => currentShortId && resourceFileRef.current?.click()}
+                                    >
+                                        <Upload className="h-5 w-5 text-muted-foreground" />
+                                        {resourceFile ? (
+                                            <div className="text-center">
+                                                <p className="text-sm font-medium truncate max-w-[200px]">{resourceFile.name}</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {(resourceFile.size / 1024).toFixed(1)} KB
                                                 </p>
-                                            )}
-                                        </div>
-                                        <input
-                                            ref={resourceFileRef}
-                                            type="file"
-                                            className="hidden"
-                                            onChange={(e) => setResourceFile(e.target.files?.[0] ?? null)}
+                                            </div>
+                                        ) : (
+                                            <p className="text-xs text-muted-foreground text-center">
+                                                Click to select a PDF, DOC, image, or other file
+                                            </p>
+                                        )}
+                                    </div>
+                                    <input
+                                        ref={resourceFileRef}
+                                        type="file"
+                                        className="hidden"
+                                        onChange={(e) => setResourceFile(e.target.files?.[0] ?? null)}
+                                    />
+                                    <div className="flex flex-col gap-1.5">
+                                        <Label htmlFor="resource-file-name" className="text-xs">
+                                            Display name <span className="text-muted-foreground">(optional)</span>
+                                        </Label>
+                                        <Input
+                                            id="resource-file-name"
+                                            value={fileResourceName}
+                                            onChange={(e) => setFileResourceName(e.target.value)}
+                                            placeholder={resourceFile?.name ?? 'e.g. Lecture Notes'}
+                                            className="h-8 text-sm"
+                                            disabled={!currentShortId}
                                         />
-                                        <div className="flex flex-col gap-1.5">
-                                            <Label htmlFor="resource-file-name" className="text-xs">
-                                                Display name <span className="text-muted-foreground">(optional)</span>
-                                            </Label>
-                                            <Input
-                                                id="resource-file-name"
-                                                value={fileResourceName}
-                                                onChange={(e) => setFileResourceName(e.target.value)}
-                                                placeholder={resourceFile?.name ?? 'e.g. Lecture Notes'}
-                                                className="h-8 text-sm"
-                                            />
-                                        </div>
-                                        <Button
-                                            size="sm"
-                                            className="w-full gap-1.5"
-                                            onClick={handleAddFileResource}
-                                            disabled={!resourceFile || addResourceMutation.isPending}
-                                        >
-                                            {addResourceMutation.isPending ? (
-                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                            ) : (
-                                                <Plus className="h-3.5 w-3.5" />
-                                            )}
-                                            Attach File
-                                        </Button>
-                                    </TabsContent>
+                                    </div>
+                                    <Button
+                                        size="sm"
+                                        className="w-full gap-1.5"
+                                        onClick={handleAddFileResource}
+                                        disabled={!currentShortId || !resourceFile || addResourceMutation.isPending}
+                                    >
+                                        {addResourceMutation.isPending ? (
+                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                            <Plus className="h-3.5 w-3.5" />
+                                        )}
+                                        Attach File
+                                    </Button>
+                                </TabsContent>
 
-                                    {/* ─ URL link tab ────────────────────── */}
-                                    <TabsContent value="url" className="flex flex-col gap-3 mt-3">
-                                        <div className="flex flex-col gap-1.5">
-                                            <Label htmlFor="resource-url-name" className="text-xs">
-                                                Name <span className="text-destructive">*</span>
-                                            </Label>
-                                            <Input
-                                                id="resource-url-name"
-                                                value={urlResourceName}
-                                                onChange={(e) => setUrlResourceName(e.target.value)}
-                                                placeholder="e.g. Reference Article"
-                                                className="h-8 text-sm"
-                                            />
-                                        </div>
-                                        <div className="flex flex-col gap-1.5">
-                                            <Label htmlFor="resource-url" className="text-xs">
-                                                URL <span className="text-destructive">*</span>
-                                            </Label>
-                                            <Input
-                                                id="resource-url"
-                                                type="url"
-                                                value={resourceUrl}
-                                                onChange={(e) => setResourceUrl(e.target.value)}
-                                                placeholder="https://example.com"
-                                                className="h-8 text-sm"
-                                            />
-                                        </div>
-                                        <Button
-                                            size="sm"
-                                            className="w-full gap-1.5"
-                                            onClick={handleAddUrlResource}
-                                            disabled={addResourceMutation.isPending}
-                                        >
-                                            {addResourceMutation.isPending ? (
-                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                            ) : (
-                                                <Link className="h-3.5 w-3.5" />
-                                            )}
-                                            Add Link
-                                        </Button>
-                                    </TabsContent>
-                                </Tabs>
-                            )}
+                                {/* ─ URL link tab ────────────────────── */}
+                                <TabsContent value="url" className="flex flex-col gap-3 mt-3">
+                                    <div className="flex flex-col gap-1.5">
+                                        <Label htmlFor="resource-url-name" className="text-xs">
+                                            Name <span className="text-destructive">*</span>
+                                        </Label>
+                                        <Input
+                                            id="resource-url-name"
+                                            value={urlResourceName}
+                                            onChange={(e) => setUrlResourceName(e.target.value)}
+                                            placeholder="e.g. Reference Article"
+                                            className="h-8 text-sm"
+                                            disabled={!currentShortId}
+                                        />
+                                    </div>
+                                    <div className="flex flex-col gap-1.5">
+                                        <Label htmlFor="resource-url" className="text-xs">
+                                            URL <span className="text-destructive">*</span>
+                                        </Label>
+                                        <Input
+                                            id="resource-url"
+                                            type="url"
+                                            value={resourceUrl}
+                                            onChange={(e) => setResourceUrl(e.target.value)}
+                                            placeholder="https://example.com"
+                                            className="h-8 text-sm"
+                                            disabled={!currentShortId}
+                                        />
+                                    </div>
+                                    <Button
+                                        size="sm"
+                                        className="w-full gap-1.5"
+                                        onClick={handleAddUrlResource}
+                                        disabled={!currentShortId || addResourceMutation.isPending}
+                                    >
+                                        {addResourceMutation.isPending ? (
+                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                            <Link className="h-3.5 w-3.5" />
+                                        )}
+                                        Add Link
+                                    </Button>
+                                </TabsContent>
+                            </Tabs>
                         </CardContent>
                     </Card>
 

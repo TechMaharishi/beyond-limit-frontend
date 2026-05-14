@@ -459,24 +459,32 @@ export async function retrySubtitles(shortId: string): Promise<{ message: string
  * URL entry → application/json:
  *   { resources: [{ name: "Display Name", url: "https://..." }] }
  */
+export interface ShortVideoResource_Added {
+    _id: string;
+    name: string;
+    url: string;
+    fileType?: string;
+    cloudinaryPublicId?: string;
+}
+
 export async function addShortResource(
     shortId: string,
     payload: AddResourcePayload
-): Promise<ShortVideo> {
+): Promise<ShortVideoResource_Added[]> {
     let response;
 
     if (payload.type === 'file') {
         const form = new FormData();
         form.append('files', payload.file);
         form.append('names', JSON.stringify([payload.name]));
-        response = await apiClient.post<ApiResponse<ShortVideo>>(
+        response = await apiClient.post<ApiResponse<ShortVideoResource_Added[]>>(
             `/short-videos/${shortId}/resources`,
             form,
-            // Unset the default application/json so the browser sets multipart/form-data with boundary
+            // Let the browser set Content-Type with the correct multipart boundary
             { headers: { 'Content-Type': undefined } }
         );
     } else {
-        response = await apiClient.post<ApiResponse<ShortVideo>>(
+        response = await apiClient.post<ApiResponse<ShortVideoResource_Added[]>>(
             `/short-videos/${shortId}/resources`,
             { resources: [{ name: payload.name, url: payload.url }] }
         );
@@ -492,9 +500,30 @@ export async function addShortResource(
 export async function removeShortResource(
     shortId: string,
     resourceId: string
-): Promise<ShortVideo> {
-    const response = await apiClient.delete<ApiResponse<ShortVideo>>(
+): Promise<{ resourceId: string }> {
+    const response = await apiClient.delete<ApiResponse<{ resourceId: string }>>(
         `/short-videos/${shortId}/resources/${resourceId}`
+    );
+    return response.data.data;
+}
+
+// ─── Thumbnail ────────────────────────────────────────────────────────────────
+
+/**
+ * Upload a custom thumbnail image for a short video.
+ * POST /short-videos/:id/thumbnail  (multipart/form-data, field: "thumbnail", max 5 MB)
+ * Also available at POST /v1/short-videos/:id/thumbnail — same behaviour.
+ */
+export async function uploadShortThumbnail(
+    shortId: string,
+    file: File
+): Promise<{ id: string; thumbnailUrl: string }> {
+    const form = new FormData();
+    form.append('thumbnail', file);
+    const response = await apiClient.post<ApiResponse<{ id: string; thumbnailUrl: string }>>(
+        `/short-videos/${shortId}/thumbnail`,
+        form,
+        { headers: { 'Content-Type': undefined } }
     );
     return response.data.data;
 }

@@ -22,6 +22,8 @@ import {
     // Resources
     addShortResource,
     removeShortResource,
+    // Thumbnail
+    uploadShortThumbnail,
     // Watch progress
     trackWatchProgress,
     getWatchProgress,
@@ -362,6 +364,22 @@ export function useTrackWatchProgress() {
             trackWatchProgress(shortId, payload),
         onSuccess: (data, variables) => {
             queryClient.setQueryData(shortsKeys.progress(variables.shortId), data);
+        },
+    });
+}
+
+/**
+ * Upload a custom thumbnail for a short video.
+ * POST /short-videos/:id/thumbnail  (multipart/form-data)
+ * Max 5 MB. Invalidates the short detail cache on success.
+ */
+export function useUploadShortThumbnail() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ shortId, file }: { shortId: string; file: File }) =>
+            uploadShortThumbnail(shortId, file),
+        onSuccess: (_data, variables) => {
+            queryClient.invalidateQueries({ queryKey: shortsKeys.detail(variables.shortId) });
         },
     });
 }
