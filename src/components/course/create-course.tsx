@@ -1628,6 +1628,7 @@ export default function CourseCreation() {
                                   {activeCourseId && lesson.videos[0]?.cloudinaryId && (
                                     <SubtitleStatusCard
                                       variant="slim"
+                                      isAdmin
                                       status={lesson.videos[0].subtitle_status}
                                       failureReason={lesson.videos[0].subtitle_failure_reason}
                                       retryCount={lesson.videos[0].subtitle_retry_count}
@@ -2404,6 +2405,7 @@ export default function CourseCreation() {
             {activeCourseId && previewVideo?.video.cloudinaryId && (
               <SubtitleStatusCard
                 variant="slim"
+                isAdmin
                 status={previewVideo.video.subtitle_status}
                 failureReason={previewVideo.video.subtitle_failure_reason}
                 retryCount={previewVideo.video.subtitle_retry_count}
